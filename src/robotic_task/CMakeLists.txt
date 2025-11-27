@@ -10,7 +10,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
+find_package(moveit_core  REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+
+
 find_package(robot_interfaces REQUIRED)
 
 if(BUILD_TESTING)
@@ -37,10 +44,21 @@ target_include_directories(robotic_task
 
 ament_target_dependencies(robotic_task
   rclcpp
-  robot_interfaces)
+  std_msgs
+  builtin_interfaces
+  trajectory_msgs
+  moveit_ros_planning_interface
+  moveit_msgs
+  robot_interfaces
+)
 
 install(TARGETS
 robotic_task
 DESTINATION lib/${PROJECT_NAME})
+
+# install(
+#   DIRECTORY launch
+#   DESTINATION share/${PROJECT_NAME}
+# )
 
 ament_package()
