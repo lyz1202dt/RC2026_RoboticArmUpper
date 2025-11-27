@@ -6,6 +6,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <cdc_trans.hpp>
 #include <robot_interfaces/msg/arm.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <data_pack.h>
 
 
@@ -23,9 +24,13 @@ private:
     std::unique_ptr<CDCTrans> cdc_trans;
     std::unique_ptr<std::thread> usb_event_handle_thread;
     std::unique_ptr<std::thread> target_send_thread;
+    
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_publisher;
+    rclcpp::Subscription<robot_interfaces::msg::Arm>::SharedPtr joint_subscriber;
+
     Arm_t arm_target;
-    rclcpp::Publisher<robot_interfaces::msg::Arm>::SharedPtr robot_pub;
-    rclcpp::Subscription<robot_interfaces::msg::Arm>::SharedPtr robot_sub;
+    std::vector<double> joint_pos;
+    std::vector<double> joint_vel;
 };
 
 #endif

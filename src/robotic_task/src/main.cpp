@@ -1,6 +1,5 @@
 #include <chrono>
 #include <memory>
-#include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/move_group_interface/move_group_interface.hpp>
 #include <moveit/utils/moveit_error_code.hpp>
 #include <rclcpp/node.hpp>

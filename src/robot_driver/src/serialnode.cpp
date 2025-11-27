@@ -1,3 +1,5 @@
+#include "sensor_msgs/msg/joint_state.hpp"
+#include <rclcpp/time.hpp>
 #include <serialnode.hpp>
 #include <chrono>
 
@@ -10,9 +12,9 @@ SerialNode::SerialNode()
     exit_thread = false;
 
     // 先创建 publisher/subscriber，确保回调中 publish 时 publisher 已就绪
-    robot_pub = this->create_publisher<robot_interfaces::msg::Arm>("legs_status", 10);
+    joint_publisher = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
     
-    robot_sub = this->create_subscription<robot_interfaces::msg::Arm>(
+    joint_subscriber = this->create_subscription<robot_interfaces::msg::Arm>(
         "legs_target", 10, std::bind(&SerialNode::legsSubscribCb, this, std::placeholders::_1));
 
 
@@ -63,16 +65,18 @@ SerialNode::~SerialNode() {
 }
 
 void SerialNode::publishLegState(const Arm_t* arm_state) {
-    robot_interfaces::msg::Arm msg;
-    //RCLCPP_INFO(this->get_logger(), "发布电机当前状态");
-    for (int i = 0; i < 6; i++) {
-        msg.joints[i].rad=arm_state->joints[i].rad;
-        msg.joints[i].omega=arm_state->joints[i].omega;
-        msg.joints[i].omega=arm_state->joints[i].torque;
+    sensor_msgs::msg::JointState msg;
+    msg.header.stamp=this->now();
+    msg.name={"joint1","joint2","joint3","joint4","joint5","joint6"};
+    msg.position.resize(6);
+    msg.velocity.resize(6);
+    for(int i=0;i<6;i++)
+    {
+        msg.position[i]=arm_state->joints->rad;
+        msg.velocity[1]=arm_state->joints->omega;
     }
-    //
+    joint_publisher->publish(msg);
     RCLCPP_INFO(this->get_logger(), "发布电机状态");
-    robot_pub->publish(msg);
 }
 
 void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
@@ -81,6 +85,6 @@ void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
         arm_target.joints[i].omega=msg.joints[i].omega;
         arm_target.joints[i].torque=msg.joints[i].omega;
     }
-    //cdc_trans->send_struct(legs_target); // 一旦订阅到最新的包，立即发送到下位机
+    //cdc_trans->send_struct(legs_target); // 一旦订阅到最新的包，立即发送到下位机（下位机用定时器保证匀速率发送方便断开检测）
     RCLCPP_INFO(this->get_logger(), "订阅到电机目标值");
 }

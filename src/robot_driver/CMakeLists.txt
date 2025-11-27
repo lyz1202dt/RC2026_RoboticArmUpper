@@ -11,6 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(robot_interfaces REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
@@ -63,7 +64,9 @@ target_link_libraries(robot_driver
 
 ament_target_dependencies(robot_driver
   rclcpp
-  robot_interfaces)
+  robot_interfaces
+  sensor_msgs
+)
 
 install(TARGETS
 robot_driver
