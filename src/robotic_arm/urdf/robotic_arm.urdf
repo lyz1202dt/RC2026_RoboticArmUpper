@@ -6,7 +6,7 @@
   name="robotic_arm">
   <link
     name="base_link">
-    <inertial>
+    <!-- <inertial>
       <origin
         xyz="-5.0772472731872E-06 7.12114657230867E-06 0.0170982136548663"
         rpy="0 0 0" />
@@ -19,7 +19,7 @@
         iyy="0.0013888100836738"
         iyz="-1.00211655132299E-07"
         izz="0.00280394558537538" />
-    </inertial>
+    </inertial> -->
     <visual>
       <origin
         xyz="0 0 0"

@@ -28,8 +28,8 @@ SerialNode::SerialNode()
                 publishLegState(pack); // 一旦接收，立即发布狗腿状态
         }
     });
-    if(!cdc_trans->open(0x0483, 0x5740))                                // 开启USB_CDC传输接口
-        exit_thread=true;
+    //if(!cdc_trans->open(0x0483, 0x5740))                                // 开启USB_CDC传输接口
+    //    exit_thread=true;
 
     // 创建线程处理CDC消息（在 open 之后、publisher 创建之后）
     usb_event_handle_thread = std::make_unique<std::thread>([this]() {
@@ -43,9 +43,14 @@ SerialNode::SerialNode()
         do{
             auto now = std::chrono::system_clock::now();
             //调试
+            Arm_t arm;
+            std::memset(&arm,0,sizeof(arm));
+            arm.joints[1].rad=0.5;
+            publishLegState(&arm);
+            RCLCPP_INFO(get_logger(),"Debug:发布关节状态");
             //legs_target.leg[2].joint[2].kd=0.05f;
-            cdc_trans->send_struct(arm_target);
-            std::this_thread::sleep_until(now + 8ms);
+            //cdc_trans->send_struct(arm_target);
+            std::this_thread::sleep_until(now + 20ms);
         }while (!exit_thread);
     });
 }
@@ -72,8 +77,8 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
     msg.velocity.resize(6);
     for(int i=0;i<6;i++)
     {
-        msg.position[i]=arm_state->joints->rad;
-        msg.velocity[1]=arm_state->joints->omega;
+        msg.position[i]=arm_state->joints[i].rad;
+        msg.velocity[i]=arm_state->joints[i].omega;
     }
     joint_publisher->publish(msg);
     RCLCPP_INFO(this->get_logger(), "发布电机状态");
