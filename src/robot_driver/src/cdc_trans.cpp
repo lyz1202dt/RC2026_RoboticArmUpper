@@ -37,7 +37,6 @@ bool CDCTrans::open(uint16_t vid, uint16_t pid ){
     int ret=libusb_claim_interface(handle, 1); // 获取通道1
     RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"获取CDC设备通道1，返回%d",ret);
 
-
     // 分配异步传输结构体
     recv_transfer = libusb_alloc_transfer(0);
     RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"分配异步传输结构体，地址%p",(void*)recv_transfer);

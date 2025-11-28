@@ -15,7 +15,7 @@ SerialNode::SerialNode()
     joint_publisher = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
     
     joint_subscriber = this->create_subscription<robot_interfaces::msg::Arm>(
-        "legs_target", 10, std::bind(&SerialNode::legsSubscribCb, this, std::placeholders::_1));
+        "myjoints_target", 10, std::bind(&SerialNode::legsSubscribCb, this, std::placeholders::_1));
 
 
     cdc_trans = std::make_unique<CDCTrans>();                           // 创建CDC传输对象
@@ -28,8 +28,12 @@ SerialNode::SerialNode()
                 publishLegState(pack); // 一旦接收，立即发布狗腿状态
         }
     });
-    //if(!cdc_trans->open(0x0483, 0x5740))                                // 开启USB_CDC传输接口
-    //    exit_thread=true;
+    if(!cdc_trans->open(0x0483, 0x5740))                                // 开启USB_CDC传输接口
+    {
+        RCLCPP_ERROR(get_logger(),"串口打开失败，无法驱动物理机械臂！");
+        exit_thread=true;
+    }
+        
 
     // 创建线程处理CDC消息（在 open 之后、publisher 创建之后）
     usb_event_handle_thread = std::make_unique<std::thread>([this]() {
@@ -43,13 +47,13 @@ SerialNode::SerialNode()
         do{
             auto now = std::chrono::system_clock::now();
             //调试
-            Arm_t arm;
-            std::memset(&arm,0,sizeof(arm));
-            arm.joints[1].rad=0.5;
-            publishLegState(&arm);
-            RCLCPP_INFO(get_logger(),"Debug:发布关节状态");
-            //legs_target.leg[2].joint[2].kd=0.05f;
-            //cdc_trans->send_struct(arm_target);
+            // Arm_t arm;
+            // std::memset(&arm,0,sizeof(arm));
+            // arm.joints[1].rad=0.5;
+            // publishLegState(&arm);
+            // RCLCPP_INFO(get_logger(),"Debug:发布关节状态");
+            // legs_target.leg[2].joint[2].kd=0.05f;
+            cdc_trans->send_struct(arm_target);
             std::this_thread::sleep_until(now + 20ms);
         }while (!exit_thread);
     });
@@ -72,7 +76,7 @@ SerialNode::~SerialNode() {
 void SerialNode::publishLegState(const Arm_t* arm_state) {
     sensor_msgs::msg::JointState msg;
     msg.header.stamp=this->now();
-    msg.name={"joint1","joint2","joint3","joint4","joint5","joint6"};
+    msg.name={"joint1","joint2","joint3","joint4","joint5","joint6"};       //发布joint状态
     msg.position.resize(6);
     msg.velocity.resize(6);
     for(int i=0;i<6;i++)
