@@ -118,6 +118,17 @@ int main(int argc, char** argv) {
     Topic订阅者：myjoints_target    订阅电机目标，发送给MCU
     Topic发布者：joint_states       向Moveit发布关节的状态
 
-节点：vision_search
-    识别KFS，查询相机坐标系到机械臂base_link的TF变换，将坐标变换为base_link下的坐标后发送给arm_handle_action，并监听反馈
+节点（李振宇）：vision_search
+    Action客户端 arm_handle_action:请求抓取一次物块
+    Action服务端 get_kfs_action：接受robot_run节点的请求获取KFS的服务
+    //其他部分
+
+    任务：
+    识别KFS，查询相机坐标系到机械臂base_link的TF变换，将坐标变换为base_link下的坐标后发送给arm_handle_action，
+    并监听反馈，再将反馈继续传递给robot_run，如果直接识别失败也要通知robot_run
+
+节点（张坤）：robot_run
+    Action客户端get_kfs_action  :在特定时刻请求一次获取KFS，失败后尝试移动机器人再次尝试
+    //其他部分
+    规划机器人总体运动，目前先用Action写请求vision_search节点进行识别。
 */

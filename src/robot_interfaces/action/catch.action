@@ -1,0 +1,11 @@
+# Goal
+int32_t action_type     #抓取到R2上还是从R2上抓取放到别的位置
+geometry_msgs/msg/PoseStamped target_pose
+---
+# Result
+bool success        #是否成功
+string reason       #失败原因
+int32_t kfs_num     #R2所拥有的KFS的数量
+---
+# Feedback
+int32_t current_state   #当前的抓取步骤
