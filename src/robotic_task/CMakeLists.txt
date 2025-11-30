@@ -34,6 +34,7 @@ endif()
 
 add_executable(robotic_task
   src/main.cpp
+  src/arm_handle_node.cpp
 )
 
 target_include_directories(robotic_task

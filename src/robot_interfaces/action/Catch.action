@@ -9,3 +9,4 @@ int32 kfs_num     #R2所拥有的KFS的数量
 ---
 # Feedback
 int32 current_state   #当前的抓取步骤
+string state_describe   #抓取步骤描述
