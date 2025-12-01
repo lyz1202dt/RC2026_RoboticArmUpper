@@ -12,12 +12,15 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
-find_package(moveit_core  REQUIRED)
+find_package(moveit_core REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
-
-
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(robot_interfaces REQUIRED)
 
 if(BUILD_TESTING)
@@ -37,6 +40,10 @@ add_executable(robotic_task
   src/arm_handle_node.cpp
 )
 
+add_executable(arm_test
+  src/test.cpp
+)
+
 target_include_directories(robotic_task
   PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/robotic_task>
@@ -45,16 +52,32 @@ target_include_directories(robotic_task
 
 ament_target_dependencies(robotic_task
   rclcpp
+  rclcpp_action
   std_msgs
   builtin_interfaces
   trajectory_msgs
   moveit_ros_planning_interface
   moveit_msgs
   robot_interfaces
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  geometry_msgs
+)
+
+
+#机械臂测试任务
+ament_target_dependencies(arm_test
+  rclcpp
+  rclcpp_action
+  std_msgs
+  trajectory_msgs
+  robot_interfaces
+  geometry_msgs
 )
 
 install(TARGETS
-robotic_task
+robotic_task arm_test
 DESTINATION lib/${PROJECT_NAME})
 
 # install(
