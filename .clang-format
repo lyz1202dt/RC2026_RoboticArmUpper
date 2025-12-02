@@ -1,6 +1,6 @@
 BasedOnStyle: LLVM
 
-ColumnLimit: 100
+ColumnLimit: 150
 
 IndentWidth: 4
 ContinuationIndentWidth: 4
@@ -9,9 +9,9 @@ AccessModifierOffset: -4
 
 Standard: c++20
 
-MaxEmptyLinesToKeep: 1
+MaxEmptyLinesToKeep: 3
 
-AlignAfterOpenBracket: AlwaysBreak
+AlignAfterOpenBracket: BlockIndent
 
 AlignArrayOfStructures: Right
 

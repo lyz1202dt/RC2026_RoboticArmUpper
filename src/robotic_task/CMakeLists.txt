@@ -59,9 +59,9 @@ ament_target_dependencies(robotic_task
   moveit_ros_planning_interface
   moveit_msgs
   robot_interfaces
+  tf2_geometry_msgs
   tf2
   tf2_ros
-  tf2_geometry_msgs
   geometry_msgs
 )
 

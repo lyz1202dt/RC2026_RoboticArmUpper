@@ -1,12 +1,18 @@
 #pragma once
 
-#include "robot_interfaces/msg/arm.hpp"
+#include "geometry_msgs/msg/pose.hpp"
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <geometry_msgs/msg/pose.hpp>
+#include <robot_interfaces/msg/arm.hpp>
 #include <moveit/move_group_interface/move_group_interface.hpp>
 #include <moveit/planning_scene_interface/planning_scene_interface.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <moveit_msgs/msg/collision_object.hpp>
-#include <rclcpp/node.hpp>
-#include <rclcpp/publisher.hpp>
+#include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/server.hpp>
 #include <rclcpp_action/server_goal_handle.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
@@ -14,14 +20,12 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/create_client.hpp>
 #include <robot_interfaces/action/catch.hpp>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
-#include <geometry_msgs/msg/transform_stamped.hpp>
-#include <tf2_ros/transform_listener.hpp>
+
 #include <thread>
 #include <memory>
 #include <atomic>
-#include <semaphore.h>
+#include <Eigen/Dense>
+# include <Eigen/Geometry>
 
 typedef enum{
     ROBOTIC_ARM_TASK_MOVE,           //移动到某个位姿
@@ -45,7 +49,7 @@ public:
 private:
     rclcpp::Node::SharedPtr node;
     rclcpp_action::Server<robot_interfaces::action::Catch>::SharedPtr arm_handle_server;  //机械臂任务接口
-    rclcpp::Publisher<robot_interfaces::msg::Arm> ::SharedPtr arm_target_publisher;         //关节目标
+    rclcpp::Publisher<robot_interfaces::msg::Arm>::SharedPtr arm_target_publisher;         //关节目标
 
     std::mutex task_mutex_;             //用于线程同步
     std::condition_variable task_cv_;
@@ -64,6 +68,14 @@ private:
     geometry_msgs::msg::TransformStamped camera_link0_tf;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
 
+    //机械臂空闲状态下的位姿
+    geometry_msgs::msg::Pose arm_idel_pos;
+    geometry_msgs::msg::Pose arm_box1_ready_pos;    //方块1准备吸取位置
+    geometry_msgs::msg::Pose arm_box1_pos;          //方块1吸取位置
+    geometry_msgs::msg::Pose arm_box2_ready_pos;    //方块2准备吸取位置
+    geometry_msgs::msg::Pose arm_box2_pos;          //方块2吸取位置
+    geometry_msgs::msg::Pose arm_box3_hold_pos;     //方块3保持位置
+
 
 
     rclcpp_action::GoalResponse handle_goal(const rclcpp_action::GoalUUID &uuid,std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal);
@@ -72,5 +84,6 @@ private:
 
     //机械臂动作处理
     void arm_catch_task_handle();
-    void send_plan(const moveit::planning_interface::MoveGroupInterface::Plan &plan);
+    bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
+    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos);
 };
