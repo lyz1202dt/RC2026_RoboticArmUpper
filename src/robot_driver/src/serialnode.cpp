@@ -1,4 +1,5 @@
 #include "sensor_msgs/msg/joint_state.hpp"
+#include <rclcpp/parameter.hpp>
 #include <rclcpp/time.hpp>
 #include <serialnode.hpp>
 #include <chrono>
@@ -7,6 +8,15 @@ using namespace std::chrono_literals;
 
 SerialNode::SerialNode()
     : Node("driver_node") {
+
+    this->declare_parameter("enable_air_pump",false);   //使能气泵
+    param_server_handle=this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &param){
+        rcl_interfaces::msg::SetParametersResult result;
+        (void)param;
+        result.successful=true;
+        RCLCPP_INFO(this->get_logger(),"参数更新");
+        return result;
+    });
 
     // 初始化状态
     exit_thread = false;

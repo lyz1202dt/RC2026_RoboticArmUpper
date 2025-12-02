@@ -27,6 +27,7 @@ private:
     
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_publisher;
     rclcpp::Subscription<robot_interfaces::msg::Arm>::SharedPtr joint_subscriber;
+    OnSetParametersCallbackHandle::SharedPtr param_server_handle;
 
     Arm_t arm_target;
     std::vector<double> joint_pos;

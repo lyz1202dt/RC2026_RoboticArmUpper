@@ -2,6 +2,7 @@
 
 #include "geometry_msgs/msg/pose.hpp"
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <rclcpp/parameter_client.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.hpp>
@@ -55,6 +56,7 @@ private:
     std::condition_variable task_cv_;
     bool has_new_task_{false};
 
+    rclcpp::SyncParametersClient::SharedPtr param_client;
     std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> current_goal_handle;
     moveit::core::RobotModelConstPtr robot_module;
     std::unique_ptr<std::thread> arm_task_thread;    //执行期望，解析plan并发布节点的线程
@@ -76,6 +78,14 @@ private:
     geometry_msgs::msg::Pose arm_box2_pos;          //方块2吸取位置
     geometry_msgs::msg::Pose arm_box3_hold_pos;     //方块3保持位置
 
+    geometry_msgs::msg::Pose kfs1_pos;
+    geometry_msgs::msg::Pose kfs2_pos;
+    geometry_msgs::msg::Pose attached_kfs_pos;
+
+
+    //障碍物/KFS定义
+    moveit::planning_interface::PlanningSceneInterface psi;
+    //moveit_msgs::msg::AttachedCollisionObject attached_kfs;
 
 
     rclcpp_action::GoalResponse handle_goal(const rclcpp_action::GoalUUID &uuid,std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal);
@@ -86,4 +96,8 @@ private:
     void arm_catch_task_handle();
     bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
     geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos);
+    bool add_attached_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
+    bool remove_attached_kfs_collision(const std::string &object_id,const std::string &fram_id);
+    bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
+    bool remove_kfs_collision(const std::string &object_id,const std::string &fram_id);
 };
