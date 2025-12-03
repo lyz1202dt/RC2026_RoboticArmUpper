@@ -11,12 +11,12 @@
 using namespace std::chrono_literals;
 
 ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
-    this->node = node; // 以依赖注入的方式，传入要管理的节点
+    this->node = node;                                                                                         // 以依赖注入的方式，传入要管理的节点
 
     param_client      = std::make_shared<rclcpp::SyncParametersClient>(node, "driver_node");
-    arm_task_thread   = std::make_unique<std::thread>(std::bind(&ArmHandleNode::arm_catch_task_handle, this));    // 创建机械臂任务执行线程
+    arm_task_thread   = std::make_unique<std::thread>(std::bind(&ArmHandleNode::arm_catch_task_handle, this)); // 创建机械臂任务执行线程
     arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(
-        node, "robotic_task",                                                                                     // 创建动作服务-服务端
+        node, "robotic_task",                                                                                  // 创建动作服务-服务端
         std::bind(&ArmHandleNode::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
         std::bind(&ArmHandleNode::cancel_goal, this, std::placeholders::_1), std::bind(&ArmHandleNode::handle_accepted, this, std::placeholders::_1)
     );
@@ -33,16 +33,15 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     arm_idel_pos.position.z    = 0.8;
 
 
-    attached_kfs_pos.orientation.w=1.0;
-    attached_kfs_pos.position.x=0.175;
-    attached_kfs_pos.position.y=0.0;
-    attached_kfs_pos.position.z=0.0;
-
+    attached_kfs_pos.orientation.w = 1.0;
+    attached_kfs_pos.position.x    = 0.175;
+    attached_kfs_pos.position.y    = 0.0;
+    attached_kfs_pos.position.z    = 0.0;
 }
 
 ArmHandleNode::~ArmHandleNode() {
     task_mutex_.lock();
-    has_new_task_ = true;                      // 置为 true，让线程退出循环时能通过条件判断
+    has_new_task_ = true;    // 置为 true，让线程退出循环时能通过条件判断
     task_mutex_.unlock();
     task_cv_.notify_all();
 
@@ -53,7 +52,7 @@ ArmHandleNode::~ArmHandleNode() {
 rclcpp_action::GoalResponse
     ArmHandleNode::handle_goal(const rclcpp_action::GoalUUID& uuid, std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal) {
     (void)uuid;
-    if (is_running_arm_task)                   // 如果正在运行机械臂动作，那么拒绝新的请求
+    if (is_running_arm_task) // 如果正在运行机械臂动作，那么拒绝新的请求
         return rclcpp_action::GoalResponse::REJECT;
 
     try {
@@ -99,17 +98,58 @@ void ArmHandleNode::arm_catch_task_handle() {
 
     move_group_interface->setPlanningTime(1);
     move_group_interface->setNumPlanningAttempts(100);
-    auto robot_module = move_group_interface->getRobotModel();
+    // auto robot_module = move_group_interface->getRobotModel();
     auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
     auto finished_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
-    // TODO:添加障碍物moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
-    // planning_scene_interface.addCollisionObjects({collision_object});
+
+    {   //为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
+        // 添加障碍物
+        moveit_msgs::msg::CollisionObject collision_object;
+        collision_object.header.frame_id = move_group_interface->getPlanningFrame();
+        collision_object.id              = "institution";
+        collision_object.primitives.resize(4);
+        collision_object.primitive_poses.resize(4);
+
+        geometry_msgs::msg::Pose collision_pos[4];
+        collision_pos[0].orientation.w = 1;
+        collision_pos[0].position.x    = -0.2;
+        collision_pos[0].position.y    = 0.2;
+        collision_pos[0].position.z    = 0.3;
+
+        collision_pos[1].orientation.w = 1;
+        collision_pos[1].position.x    = 0.2;
+        collision_pos[1].position.y    = 0.2;
+        collision_pos[1].position.z    = 0.3;
+
+        collision_pos[2].orientation.w = 1;
+        collision_pos[2].position.x    = -0.2;
+        collision_pos[2].position.y    = -0.2;
+        collision_pos[2].position.z    = 0.3;
+
+        collision_pos[3].orientation.w = 1;
+        collision_pos[3].position.x    = 0.2;
+        collision_pos[3].position.y    = -0.2;
+        collision_pos[3].position.z    = 0.3;
+
+        shape_msgs::msg::SolidPrimitive primitive;
+        collision_object.primitives[0].type = primitive.BOX;
+        collision_object.primitives[0].dimensions.resize(3);
+        collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.1;
+        collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.1;
+        collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
+        collision_object.primitives[3]=collision_object.primitives[2]=collision_object.primitives[1]=collision_object.primitives[0];
+
+        collision_object.operation = collision_object.ADD;
+        psi.applyCollisionObject(collision_object);         //应用障碍物
+    }
+
     while (rclcpp::ok()) {
         is_running_arm_task = false;
         std::unique_lock<std::mutex> lock(task_mutex_);
         task_cv_.wait(lock, [this]() { return has_new_task_; });  // 等待直到lambda表达式返回真
         has_new_task_ = false;
         lock.unlock();
+        
         if (!rclcpp::ok()) {
             break;
         }
@@ -174,7 +214,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            trj_deal = send_plan(cart_trajectory);     // 将轨迹发送给机械臂执行
+            trj_deal = send_plan(cart_trajectory);                                                       // 将轨迹发送给机械臂执行
             if (!trj_deal) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
@@ -218,25 +258,26 @@ void ArmHandleNode::arm_catch_task_handle() {
             feedback_msg->current_state  = 3;
             feedback_msg->state_describe = "机械臂到达放置KFS的位置";
             current_goal_handle->publish_feedback(feedback_msg);
-            if (current_kfs_num== 2) // 如果当前机器人上有3个KFS，那么最后一个KFS只能用手拿着，因此在这里就判定成功然后退出，否则继续执行后面的关闭气泵，退出机械臂等操作
+            if (current_kfs_num
+                == 2) // 如果当前机器人上有3个KFS，那么最后一个KFS只能用手拿着，因此在这里就判定成功然后退出，否则继续执行后面的关闭气泵，退出机械臂等操作
             {
                 current_kfs_num       = current_kfs_num + 1;
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "成功完成机械臂的执行";
                 current_goal_handle->succeed(finished_msg);
-                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-                remove_attached_kfs_collision("kfs", "link6");
+                // param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+                // remove_attached_kfs_collision("kfs", "link6");
                 continue;
             }
             param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
             std::this_thread::sleep_for(2s);
 
-            remove_attached_kfs_collision("kfs", "link6");          //清除附着的KFS
+            remove_attached_kfs_collision("kfs", "link6");               // 清除附着的KFS
             if (current_kfs_num == 0)
                 add_kfs_collision(kfs1_pos, "kfs1", "link6");
             else if (current_kfs_num == 1)
                 add_kfs_collision(kfs2_pos, "kfs2", "link6");
-            
+
 
             way_points[0] = move_group_interface->getCurrentPose().pose;
 
@@ -319,7 +360,7 @@ bool ArmHandleNode::send_plan(const moveit_msgs::msg::RobotTrajectory& trajector
     return true;
 }
 
-geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose& box_pos) {
+geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(const geometry_msgs::msg::Pose& box_pos) {
     Eigen::Vector3d pos(box_pos.position.x, box_pos.position.y, box_pos.position.z);
     Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, box_pos.orientation.y,
                          box_pos.orientation.z);            // 构造物体的位置和平移矩阵
