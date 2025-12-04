@@ -18,6 +18,8 @@ public:
             std::chrono::seconds(10),
             std::bind(&ActionTestNode::send_goal, this)
         );
+
+        send_goal();
     }
 
 private:
@@ -42,14 +44,15 @@ private:
 
         // ===== 填写目标位姿（camera_link 下的一个简单坐标）=====
 
-        goal_msg.target_pose.position.x = 0.2;
-        goal_msg.target_pose.position.y = 0.0;
-        goal_msg.target_pose.position.z = 0.1;
 
-        goal_msg.target_pose.orientation.w = 1.0;  // 单位四元数
-        goal_msg.target_pose.orientation.x = 0.0;
-        goal_msg.target_pose.orientation.y = 0.0;
-        goal_msg.target_pose.orientation.z = 0.0;
+        goal_msg.target_pose.position.x = -0.002128;
+        goal_msg.target_pose.position.y = -0.279561;
+        goal_msg.target_pose.position.z = 0.757060;
+
+        goal_msg.target_pose.orientation.w = 0.494101;  // 单位四元数
+        goal_msg.target_pose.orientation.x = -0.494456;
+        goal_msg.target_pose.orientation.y = 0.502310;
+        goal_msg.target_pose.orientation.z = 0.508982;
 
         // action 类型为 “移动”
         goal_msg.action_type =  1;

@@ -34,8 +34,8 @@ SerialNode::SerialNode()
         if (size == sizeof(Arm_t)) // 验证包长度，可以被视作四条腿的状态数据包
         {
             const Arm_t* pack = reinterpret_cast<const Arm_t*>(data);
-            if (pack->pack_type == 0)  // 确认包类型正确
-                publishLegState(pack); // 一旦接收，立即发布狗腿状态
+            if (pack->pack_type == 1)  // 确认包类型正确
+                publishLegState(pack);
         }
     });
     if(!cdc_trans->open(0x0483, 0x5740))                                // 开启USB_CDC传输接口
@@ -57,12 +57,10 @@ SerialNode::SerialNode()
         do{
             auto now = std::chrono::system_clock::now();
             //调试
-            // Arm_t arm;
-            // std::memset(&arm,0,sizeof(arm));
-            // arm.joints[1].rad=0.5;
-            // publishLegState(&arm);
-            // RCLCPP_INFO(get_logger(),"Debug:发布关节状态");
-            // legs_target.leg[2].joint[2].kd=0.05f;
+            //RCLCPP_INFO(get_logger(),"写入关节目标值");
+            //RCLCPP_INFO(this->get_logger(), "关节2期望位置=%lf",arm_target.joints[1].rad);
+            arm_target.pack_type=1;
+            RCLCPP_INFO(this->get_logger(),"输出%lf",arm_target.joints[1].rad);
             cdc_trans->send_struct(arm_target);
             std::this_thread::sleep_until(now + 20ms);
         }while (!exit_thread);
@@ -95,14 +93,14 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
         msg.velocity[i]=arm_state->joints[i].omega;
     }
     joint_publisher->publish(msg);
-    RCLCPP_INFO(this->get_logger(), "发布电机状态");
+    //RCLCPP_INFO(this->get_logger(), "发布电机状态");
 }
 
 void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
     for (int i = 0; i < 6; i++) {
         arm_target.joints[i].rad=msg.joints[i].rad;
         arm_target.joints[i].omega=msg.joints[i].omega;
-        arm_target.joints[i].torque=msg.joints[i].omega;
+        arm_target.joints[i].torque=msg.joints[i].torque;
     }
     //cdc_trans->send_struct(legs_target); // 一旦订阅到最新的包，立即发送到下位机（下位机用定时器保证匀速率发送方便断开检测）
     RCLCPP_INFO(this->get_logger(), "订阅到电机目标值");

@@ -11,14 +11,12 @@
 #include <robot_interfaces/msg/arm.hpp>
 #include <moveit/move_group_interface/move_group_interface.hpp>
 #include <moveit/planning_scene_interface/planning_scene_interface.hpp>
-#include <geometry_msgs/msg/pose.hpp>
 #include <moveit_msgs/msg/collision_object.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/server.hpp>
 #include <rclcpp_action/server_goal_handle.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <moveit/utils/moveit_error_code.hpp>
-#include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/create_client.hpp>
 #include <robot_interfaces/action/catch.hpp>
 
@@ -26,12 +24,12 @@
 #include <memory>
 #include <atomic>
 #include <Eigen/Dense>
-# include <Eigen/Geometry>
+#include <Eigen/Geometry>
 
 typedef enum{
-    ROBOTIC_ARM_TASK_MOVE,           //移动到某个位姿
-    ROBOTIC_ARM_TASK_CATCH_TARGET,   //捕获处于某个坐标下的KFS
-    ROBOTIC_ARM_TASK_PLACE_TARGET    //将机器人上的KFS放置到某个坐标
+    ROBOTIC_ARM_TASK_MOVE=1,           //移动到某个位姿
+    ROBOTIC_ARM_TASK_CATCH_TARGET=2,   //捕获处于某个坐标下的KFS
+    ROBOTIC_ARM_TASK_PLACE_TARGET=3    //将机器人上的KFS放置到某个坐标
 }ArmTask;       //机械臂任务类型
 
 typedef enum{

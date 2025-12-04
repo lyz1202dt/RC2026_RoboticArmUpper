@@ -26,11 +26,10 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
 
 
-
     arm_idel_pos.orientation.w = 1.0;
     arm_idel_pos.position.x    = 0.1;
     arm_idel_pos.position.y    = 0.0;
-    arm_idel_pos.position.z    = 0.8;
+    arm_idel_pos.position.z    = 0.4;
 
 
     attached_kfs_pos.orientation.w = 1.0;
@@ -55,12 +54,12 @@ rclcpp_action::GoalResponse
     if (is_running_arm_task) // 如果正在运行机械臂动作，那么拒绝新的请求
         return rclcpp_action::GoalResponse::REJECT;
 
-    try {
-        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
-    } catch (const tf2::TransformException& ex) {
-        RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
-        return rclcpp_action::GoalResponse::REJECT;
-    }
+    // try {
+    //     camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
+    // } catch (const tf2::TransformException& ex) {
+    //     RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
+    //     return rclcpp_action::GoalResponse::REJECT;
+    // }
 
     // Transform the pose manually
     geometry_msgs::msg::Pose transformed_pose;
@@ -94,15 +93,14 @@ void ArmHandleNode::handle_accepted(const std::shared_ptr<rclcpp_action::ServerG
 // 机械臂
 void ArmHandleNode::arm_catch_task_handle() {
     RCLCPP_INFO(node->get_logger(), "进入机械臂任务处理线程");
+    bool first_run = true;
     moveit::planning_interface::MoveGroupInterface::Plan plan;
 
-    move_group_interface->setPlanningTime(1);
-    move_group_interface->setNumPlanningAttempts(100);
     // auto robot_module = move_group_interface->getRobotModel();
     auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
     auto finished_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
 
-    {   //为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
+    /*{   //为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
         // 添加障碍物
         moveit_msgs::msg::CollisionObject collision_object;
         collision_object.header.frame_id = move_group_interface->getPlanningFrame();
@@ -141,7 +139,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         collision_object.operation = collision_object.ADD;
         psi.applyCollisionObject(collision_object);         //应用障碍物
-    }
+    }*/
 
     while (rclcpp::ok()) {
         is_running_arm_task = false;
@@ -149,10 +147,29 @@ void ArmHandleNode::arm_catch_task_handle() {
         task_cv_.wait(lock, [this]() { return has_new_task_; });  // 等待直到lambda表达式返回真
         has_new_task_ = false;
         lock.unlock();
+        RCLCPP_INFO(node->get_logger(), "接收到新的任务请求");
         
+
+        if (first_run)                                            // 第一次执行时，设置一次规划器参数
+        {
+            move_group_interface->setPlanningTime(5);
+            move_group_interface->setNumPlanningAttempts(100);
+            move_group_interface->setGoalOrientationTolerance(0.1);
+            move_group_interface->setGoalPositionTolerance(0.03);
+            move_group_interface->setStartStateToCurrentState();
+            first_run = false;
+        }
+
+
         if (!rclcpp::ok()) {
             break;
         }
+
+        auto pos = move_group_interface->getCurrentPose();
+        RCLCPP_INFO(
+            node->get_logger(), "当前机械臂位姿:Pos(%lf,%lf,%lf),Rot(%lf,%lf,%lf,%lf)", pos.pose.position.x, pos.pose.position.y, pos.pose.position.z,
+            pos.pose.orientation.w, pos.pose.orientation.x, pos.pose.orientation.y, pos.pose.orientation.z
+        );
 
         if (current_task_type == ROBOTIC_ARM_TASK_MOVE)           // 要求机械臂移动到某个位姿（因为移动动作在一个周期内完成，所以不再需要执行）
         {
