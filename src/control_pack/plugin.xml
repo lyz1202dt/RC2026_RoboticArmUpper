@@ -1,0 +1,7 @@
+<library path="mycontrol">
+  <class
+    name="mycontrol/MyControl"
+    type="mycontrol::MyControl"
+    base_class_type="hardware_interface::SystemInterface"
+    description="My ros2_control hardware interface"/>
+</library>

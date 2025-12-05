@@ -25,7 +25,7 @@ private:
     std::unique_ptr<std::thread> usb_event_handle_thread;
     std::unique_ptr<std::thread> target_send_thread;
     
-    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_publisher;
+    rclcpp::Publisher<robot_interfaces::msg::Arm>::SharedPtr joint_publisher;
     rclcpp::Subscription<robot_interfaces::msg::Arm>::SharedPtr joint_subscriber;
     OnSetParametersCallbackHandle::SharedPtr param_server_handle;
 

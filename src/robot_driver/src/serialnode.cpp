@@ -1,3 +1,4 @@
+#include "robot_interfaces/msg/arm.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include <rclcpp/parameter.hpp>
 #include <rclcpp/time.hpp>
@@ -22,7 +23,8 @@ SerialNode::SerialNode()
     exit_thread = false;
 
     // 先创建 publisher/subscriber，确保回调中 publish 时 publisher 已就绪
-    joint_publisher = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    //joint_publisher = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    joint_publisher = this->create_publisher<robot_interfaces::msg::Arm>("myjoints_state", 10);
     
     joint_subscriber = this->create_subscription<robot_interfaces::msg::Arm>(
         "myjoints_target", 10, std::bind(&SerialNode::legsSubscribCb, this, std::placeholders::_1));
@@ -60,9 +62,8 @@ SerialNode::SerialNode()
             //RCLCPP_INFO(get_logger(),"写入关节目标值");
             //RCLCPP_INFO(this->get_logger(), "关节2期望位置=%lf",arm_target.joints[1].rad);
             arm_target.pack_type=1;
-            RCLCPP_INFO(this->get_logger(),"输出%lf",arm_target.joints[1].rad);
             cdc_trans->send_struct(arm_target);
-            std::this_thread::sleep_until(now + 20ms);
+            std::this_thread::sleep_until(now + 10ms);
         }while (!exit_thread);
     });
 }
@@ -82,7 +83,7 @@ SerialNode::~SerialNode() {
 }
 
 void SerialNode::publishLegState(const Arm_t* arm_state) {
-    sensor_msgs::msg::JointState msg;
+    /*sensor_msgs::msg::JointState msg;
     msg.header.stamp=this->now();
     msg.name={"joint1","joint2","joint3","joint4","joint5","joint6"};       //发布joint状态
     msg.position.resize(6);
@@ -91,6 +92,13 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
     {
         msg.position[i]=arm_state->joints[i].rad;
         msg.velocity[i]=arm_state->joints[i].omega;
+    }*/
+    robot_interfaces::msg::Arm msg;
+    for(int i=0;i<6;i++)
+    {
+        msg.joints[i].rad=arm_state->joints[i].rad;
+        msg.joints[i].omega=arm_state->joints[i].omega;
+        msg.joints[i].torque=arm_state->joints[i].torque;
     }
     joint_publisher->publish(msg);
     //RCLCPP_INFO(this->get_logger(), "发布电机状态");
@@ -103,5 +111,5 @@ void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
         arm_target.joints[i].torque=msg.joints[i].torque;
     }
     //cdc_trans->send_struct(legs_target); // 一旦订阅到最新的包，立即发送到下位机（下位机用定时器保证匀速率发送方便断开检测）
-    RCLCPP_INFO(this->get_logger(), "订阅到电机目标值");
+    RCLCPP_INFO(this->get_logger(), "订阅到电机目标值,joint2.rad=%lf",arm_target.joints[1].rad);
 }
