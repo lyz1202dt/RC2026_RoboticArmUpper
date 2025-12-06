@@ -5,7 +5,6 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <memory>
-#include <moveit/utils/moveit_error_code.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <thread>
 
@@ -222,7 +221,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             way_points[0] = start_pose;                                                                  // 当前位姿
             way_points[1] = task_target_pos;                                                             // 最终抓取位姿
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
-            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, cart_trajectory, false);
+            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0,cart_trajectory, false);
             if (fraction < 0.99f)                                                                        // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
@@ -301,7 +300,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 way_points[1] = arm_box1_ready_pos;
             else if (current_kfs_num == 1)
                 way_points[1] = arm_box2_ready_pos;
-            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, cart_trajectory, false);
+            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0,cart_trajectory, false);
             if (fraction < 0.99) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "机械臂回退与KFS分离时路径规划失败";
