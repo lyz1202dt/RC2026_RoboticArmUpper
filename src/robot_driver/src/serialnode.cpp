@@ -47,7 +47,6 @@ SerialNode::SerialNode()
         RCLCPP_ERROR(get_logger(),"串口打开失败，无法驱动物理机械臂！");
         exit_thread=true;
     }
-        
 
     // 创建线程处理CDC消息（在 open 之后、publisher 创建之后）
     usb_event_handle_thread = std::make_unique<std::thread>([this]() {
@@ -60,10 +59,7 @@ SerialNode::SerialNode()
     target_send_thread=std::make_unique<std::thread>([this](){
         do{
             auto now = std::chrono::system_clock::now();
-            //cdc_trans->send_struct(arm_target);
-            arm_target.joints[2].rad=0.2;
-            cdc_trans->send((uint8_t*)&arm_target, sizeof(arm_target));
-            RCLCPP_INFO(this->get_logger(),"arm_target=%lf",arm_target.joints[2].rad);
+            cdc_trans->send_struct(arm_target);
             std::this_thread::sleep_until(now + 10ms);
         }while (!exit_thread);
     });
@@ -102,7 +98,7 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
         msg.joints[i].torque=arm_state->joints[i].torque;
     }
     joint_publisher->publish(msg);
-    //RCLCPP_INFO(this->get_logger(), "发布电机状态");
+    RCLCPP_INFO(this->get_logger(), "发布电机状态");
 }
 
 void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
