@@ -1,35 +1,24 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import TimerAction
-import os
 from ament_index_python.packages import get_package_share_directory
-from launch.substitutions import Command
-from launch_ros.parameter_descriptions import ParameterValue
+from moveit_configs_utils import MoveItConfigsBuilder
+import os
 
 
 def generate_launch_description():
+
+    moveit_config = MoveItConfigsBuilder("robotic_arm", package_name="robotic_config").to_moveit_configs()
     
-    pkg_dir = get_package_share_directory('robotic_arm')
-    config_dir = get_package_share_directory('robotic_config')
 
-    urdf_path = os.path.join(pkg_dir, "urdf", "robotic_arm.urdf")
-    robot_desc = ParameterValue(Command(["xacro " + urdf_path]), value_type=str)
-
-    controller_config = os.path.join(config_dir, "config", "ros2_controllers.yaml")
-
+    controller_config_dir = get_package_share_directory('robotic_config')
+    controller_config = os.path.join(controller_config_dir, "config", "ros2_controllers.yaml")
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[controller_config,
-                    {"robot_description": robot_desc},
-                    {
-                        "robotic_arm_controller": {
-                            "type": "joint_trajectory_controller/JointTrajectoryController"
-                        },
-                        "joint_state_broadcaster": {
-                            "type": "joint_state_broadcaster/JointStateBroadcaster"
-                        }
-                    }],
+                    moveit_config.robot_description,
+        ],
         output="both"
     )
 
@@ -40,7 +29,7 @@ def generate_launch_description():
             Node(
                 package="controller_manager",
                 executable="spawner",
-                arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager"],
+                arguments=["joint_state_broadcaster2", "--controller-manager", "/controller_manager"],
                 output="both"
             )
         ]
@@ -52,21 +41,13 @@ def generate_launch_description():
             Node(
                 package="controller_manager",
                 executable="spawner",
-                arguments=["robotic_arm_controller", "--controller-manager", "/controller_manager"],
+                arguments=["robotic_arm_controller2", "--controller-manager", "/controller_manager"],
                 output="both"
             )
         ]
     )
 
     return LaunchDescription([
-
-        # robot_state_publisher：发布 /robot_description 和 TF
-        # Node(
-        #     package='robot_state_publisher',
-        #     executable='robot_state_publisher',
-        #     parameters=[{'robot_description': robot_desc}]
-        # ),
-        
         # ros2_control 主节点
         ros2_control_node,
 
