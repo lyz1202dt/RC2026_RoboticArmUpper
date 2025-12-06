@@ -5,6 +5,7 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <memory>
+#include <moveit/utils/moveit_error_code.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <thread>
 
@@ -160,7 +161,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             first_run = false;
         }
 
-
         if (!rclcpp::ok()) {
             break;
         }
@@ -175,10 +175,9 @@ void ArmHandleNode::arm_catch_task_handle() {
         {
             move_group_interface->setPoseTarget(task_target_pos); // 设置目标
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划当前位置到目标位置的曲线
-            if (success) {
-                bool finished = send_plan(plan.trajectory);                                              // 阻塞函数，发送轨迹
-
-                if (!finished) {
+            if (success) {                                          // 阻塞函数，发送轨迹
+                auto ret=move_group_interface->execute(plan);
+                if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
                     finished_msg->reason  = "任务被客户端取消";
                     finished_msg->kfs_num = current_kfs_num;
                     current_goal_handle->canceled(finished_msg);
@@ -206,8 +205,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            bool trj_deal = send_plan(plan.trajectory);
-            if (!trj_deal) {
+            auto ret=move_group_interface->execute(plan);
+            if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
@@ -231,8 +230,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            trj_deal = send_plan(cart_trajectory);                                                       // 将轨迹发送给机械臂执行
-            if (!trj_deal) {
+            ret=move_group_interface->execute(plan);
+            if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
@@ -263,8 +262,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 remove_attached_kfs_collision("kfs", "link6");
                 continue;
             }
-            trj_deal = send_plan(plan.trajectory);
-            if (!trj_deal) {
+            ret=move_group_interface->execute(plan);
+            if (ret!=moveit::core::MoveItErrorCode::SUCCESS){
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
@@ -309,8 +308,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            trj_deal = send_plan(cart_trajectory);                       // 远离KFS一段距离防止错误判定碰撞
-            if (!trj_deal) {
+            ret=move_group_interface->execute(plan);
+            if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);

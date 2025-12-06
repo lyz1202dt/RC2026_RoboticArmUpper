@@ -10,6 +10,8 @@ using namespace std::chrono_literals;
 SerialNode::SerialNode()
     : Node("driver_node") {
 
+    arm_target.pack_type=1;
+
     this->declare_parameter("enable_air_pump",false);   //使能气泵
     param_server_handle=this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &param){
         rcl_interfaces::msg::SetParametersResult result;
@@ -58,11 +60,10 @@ SerialNode::SerialNode()
     target_send_thread=std::make_unique<std::thread>([this](){
         do{
             auto now = std::chrono::system_clock::now();
-            //调试
-            //RCLCPP_INFO(get_logger(),"写入关节目标值");
-            //RCLCPP_INFO(this->get_logger(), "关节2期望位置=%lf",arm_target.joints[1].rad);
-            arm_target.pack_type=1;
-            cdc_trans->send_struct(arm_target);
+            //cdc_trans->send_struct(arm_target);
+            arm_target.joints[2].rad=0.2;
+            cdc_trans->send((uint8_t*)&arm_target, sizeof(arm_target));
+            RCLCPP_INFO(this->get_logger(),"arm_target=%lf",arm_target.joints[2].rad);
             std::this_thread::sleep_until(now + 10ms);
         }while (!exit_thread);
     });
@@ -111,5 +112,5 @@ void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
         arm_target.joints[i].torque=msg.joints[i].torque;
     }
     //cdc_trans->send_struct(legs_target); // 一旦订阅到最新的包，立即发送到下位机（下位机用定时器保证匀速率发送方便断开检测）
-    RCLCPP_INFO(this->get_logger(), "订阅到电机目标值,joint2.rad=%lf",arm_target.joints[1].rad);
+    RCLCPP_INFO(this->get_logger(), "订阅到电机目标值");
 }
