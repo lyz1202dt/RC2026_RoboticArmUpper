@@ -4,8 +4,11 @@
 #include "shape_msgs/msg/solid_primitive.hpp"
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
+#include <cassert>
 #include <memory>
+#include <rclcpp/logging.hpp>
 #include <rclcpp/parameter_client.hpp>
+#include <string>
 #include <thread>
 
 using namespace std::chrono_literals;
@@ -25,17 +28,24 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
 
-
-    arm_idel_pos.orientation.w = 1.0;
-    arm_idel_pos.position.x    = 0.1;
-    arm_idel_pos.position.y    = 0.0;
-    arm_idel_pos.position.z    = 0.4;
+    psi=std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
 
 
     attached_kfs_pos.orientation.w = 1.0;
-    attached_kfs_pos.position.x    = 0.175;
+    attached_kfs_pos.position.x    = 0.0;
     attached_kfs_pos.position.y    = 0.0;
-    attached_kfs_pos.position.z    = 0.0;
+    attached_kfs_pos.position.z    = -0.24;
+
+    kfs1_pos.orientation.w=1.0;
+    kfs1_pos.position.x=-0.460;
+    kfs1_pos.position.y=0.0;
+    kfs1_pos.position.z=0.275;
+
+    kfs2_pos.orientation.w=1.0;
+    kfs2_pos.position.x=-0.460;
+    kfs2_pos.position.y=0.0;
+    kfs2_pos.position.z=0.275+0.350;
+
 }
 
 ArmHandleNode::~ArmHandleNode() {
@@ -62,10 +72,11 @@ rclcpp_action::GoalResponse
     // }
 
     // Transform the pose manually
-    geometry_msgs::msg::Pose transformed_pose;
-    tf2::doTransform(goal->target_pose, transformed_pose, camera_link0_tf);
-    task_target_pos   = transformed_pose;
+    // geometry_msgs::msg::Pose transformed_pose;
+    // tf2::doTransform(goal->target_pose, transformed_pose, camera_link0_tf);
+    task_target_pos   = goal->target_pose;
     current_task_type = goal->action_type;
+
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -78,7 +89,6 @@ rclcpp_action::CancelResponse
 }
 
 void ArmHandleNode::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> goal_handle) {
-    (void)goal_handle;
     current_goal_handle = goal_handle;
     is_running_arm_task = true;
     cancle_current_task = false;
@@ -100,57 +110,68 @@ void ArmHandleNode::arm_catch_task_handle() {
     auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
     auto finished_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
 
-    /*{   //为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
-        // 添加障碍物
-        moveit_msgs::msg::CollisionObject collision_object;
-        collision_object.header.frame_id = move_group_interface->getPlanningFrame();
-        collision_object.id              = "institution";
-        collision_object.primitives.resize(4);
-        collision_object.primitive_poses.resize(4);
+    // std::this_thread::sleep_for(5s); // 等待RVIZ2启动完成
+    // {                                // 为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
+    //     // 添加障碍物
+    //     moveit_msgs::msg::CollisionObject collision_object;
+    //     collision_object.header.frame_id = "base_link";
+    //     collision_object.id              = "institution";
+    //     collision_object.primitives.resize(4);
+    //     collision_object.primitive_poses.resize(4);
 
-        geometry_msgs::msg::Pose collision_pos[4];
-        collision_pos[0].orientation.w = 1;
-        collision_pos[0].position.x    = -0.2;
-        collision_pos[0].position.y    = 0.2;
-        collision_pos[0].position.z    = 0.3;
+    //     geometry_msgs::msg::Pose collision_pos[4];
+    //     collision_pos[0].orientation.w = 1;
+    //     collision_pos[0].position.x    = -0.2;
+    //     collision_pos[0].position.y    = 0.2;
+    //     collision_pos[0].position.z    = 0.3;
 
-        collision_pos[1].orientation.w = 1;
-        collision_pos[1].position.x    = 0.2;
-        collision_pos[1].position.y    = 0.2;
-        collision_pos[1].position.z    = 0.3;
+    //     collision_pos[1].orientation.w = 1;
+    //     collision_pos[1].position.x    = 0.2;
+    //     collision_pos[1].position.y    = 0.2;
+    //     collision_pos[1].position.z    = 0.3;
 
-        collision_pos[2].orientation.w = 1;
-        collision_pos[2].position.x    = -0.2;
-        collision_pos[2].position.y    = -0.2;
-        collision_pos[2].position.z    = 0.3;
+    //     collision_pos[2].orientation.w = 1;
+    //     collision_pos[2].position.x    = -0.2;
+    //     collision_pos[2].position.y    = -0.2;
+    //     collision_pos[2].position.z    = 0.3;
 
-        collision_pos[3].orientation.w = 1;
-        collision_pos[3].position.x    = 0.2;
-        collision_pos[3].position.y    = -0.2;
-        collision_pos[3].position.z    = 0.3;
+    //     collision_pos[3].orientation.w = 1;
+    //     collision_pos[3].position.x    = 0.2;
+    //     collision_pos[3].position.y    = -0.2;
+    //     collision_pos[3].position.z    = 0.3;
 
-        shape_msgs::msg::SolidPrimitive primitive;
-        collision_object.primitives[0].type = primitive.BOX;
-        collision_object.primitives[0].dimensions.resize(3);
-        collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.1;
-        collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.1;
-        collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
-        collision_object.primitives[3]=collision_object.primitives[2]=collision_object.primitives[1]=collision_object.primitives[0];
+    //     shape_msgs::msg::SolidPrimitive primitive;
+    //     collision_object.primitives[0].type = primitive.BOX;
+    //     collision_object.primitives[0].dimensions.resize(3);
+    //     collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.1;
+    //     collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.1;
+    //     collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
+    //     collision_object.primitives[3] = collision_object.primitives[2] = collision_object.primitives[1] = collision_object.primitives[0];
 
-        collision_object.operation = collision_object.ADD;
-        psi.applyCollisionObject(collision_object);         //应用障碍物
-    }*/
+    //     collision_object.operation = collision_object.ADD;
+    //     psi.applyCollisionObject(collision_object);                                      // 应用障碍物
+    // }
 
     while (rclcpp::ok()) {
         is_running_arm_task = false;
         std::unique_lock<std::mutex> lock(task_mutex_);
-        task_cv_.wait(lock, [this]() { return has_new_task_; });  // 等待直到lambda表达式返回真
+        bool ok       = task_cv_.wait_for(lock, 5s, [this]() { return has_new_task_; }); // 等待直到lambda表达式返回真
         has_new_task_ = false;
         lock.unlock();
-        RCLCPP_INFO(node->get_logger(), "接收到新的任务请求");
-        
 
-        if (first_run)                                            // 第一次执行时，设置一次规划器参数
+        if (!ok) {
+            auto pos = move_group_interface->getCurrentPose();
+            RCLCPP_INFO(
+                node->get_logger(), "当前机械臂位姿:Pos(%lf,%lf,%lf),Rot(%lf,%lf,%lf,%lf)", pos.pose.position.x, pos.pose.position.y,
+                pos.pose.position.z, pos.pose.orientation.w, pos.pose.orientation.x, pos.pose.orientation.y, pos.pose.orientation.z
+            );
+            continue;
+        }
+
+        RCLCPP_INFO(node->get_logger(), "接收到新的任务请求");
+
+
+        if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
             move_group_interface->setPlanningTime(5);
             move_group_interface->setNumPlanningAttempts(100);
@@ -164,19 +185,13 @@ void ArmHandleNode::arm_catch_task_handle() {
             break;
         }
 
-        auto pos = move_group_interface->getCurrentPose();
-        RCLCPP_INFO(
-            node->get_logger(), "当前机械臂位姿:Pos(%lf,%lf,%lf),Rot(%lf,%lf,%lf,%lf)", pos.pose.position.x, pos.pose.position.y, pos.pose.position.z,
-            pos.pose.orientation.w, pos.pose.orientation.x, pos.pose.orientation.y, pos.pose.orientation.z
-        );
-
         if (current_task_type == ROBOTIC_ARM_TASK_MOVE)           // 要求机械臂移动到某个位姿（因为移动动作在一个周期内完成，所以不再需要执行）
         {
             move_group_interface->setPoseTarget(task_target_pos); // 设置目标
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划当前位置到目标位置的曲线
-            if (success) {                                          // 阻塞函数，发送轨迹
-                auto ret=move_group_interface->execute(plan);
-                if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
+            if (success) {                                                                               // 阻塞函数，发送轨迹
+                auto ret = move_group_interface->execute(plan);
+                if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
                     finished_msg->reason  = "任务被客户端取消";
                     finished_msg->kfs_num = current_kfs_num;
                     current_goal_handle->canceled(finished_msg);
@@ -204,8 +219,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            auto ret=move_group_interface->execute(plan);
-            if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
+            auto ret = move_group_interface->execute(plan);
+            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
@@ -221,56 +236,68 @@ void ArmHandleNode::arm_catch_task_handle() {
             way_points[0] = start_pose;                                                                  // 当前位姿
             way_points[1] = task_target_pos;                                                             // 最终抓取位姿
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
-            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0,cart_trajectory, false);
-            if (fraction < 0.99f)                                                                        // 如果轨迹生成失败
+            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            ret=move_group_interface->execute(plan);
-            if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
+            ret = move_group_interface->execute(cart_trajectory);
+            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
                 continue;
             }
             feedback_msg->current_state  = 2;
-            feedback_msg->state_describe = "机械臂到达吸取位置，启动气泵吸取KFS";
+            feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
             // 使用一个参数服务来启动气泵
-            param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
+            std::vector<std::string> node_names = node->get_node_names();
+            if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
+            }
+            else {
+                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
+            }
+            
+
+            feedback_msg->current_state  = 3;
+            feedback_msg->state_describe = "启动气泵吸取KFS";
+            current_goal_handle->publish_feedback(feedback_msg);
+
             std::this_thread::sleep_for(2s);
             // 为机械臂末端连接一个KFS用于碰撞计算
-            add_attached_kfs_collision(attached_kfs_pos, "kfs", "link6");
+            add_attached_kfs_collision();
 
             if (current_kfs_num == 0)                              // 根据当前机器人上的情况设置目标
-                move_group_interface->setPoseTarget(arm_box1_pos); // 设置目标
+                move_group_interface->setNamedTarget("kfs1_touch_pos"); // 设置目标
             else if (current_kfs_num == 1)
-                move_group_interface->setPoseTarget(arm_box2_pos);
+                move_group_interface->setNamedTarget("kfs2_touch_pos");
             else
-                move_group_interface->setPoseTarget(arm_box3_hold_pos);
-
+                move_group_interface->setNamedTarget("kfs3_hold_pos");
+            
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
             if (!success) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "机械臂无法到达放置KFS的位置，路径规划失败";
                 current_goal_handle->abort(finished_msg);
                 param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-                remove_attached_kfs_collision("kfs", "link6");
+                remove_attached_kfs_collision();
                 continue;
             }
-            ret=move_group_interface->execute(plan);
-            if (ret!=moveit::core::MoveItErrorCode::SUCCESS){
+            ret = move_group_interface->execute(plan);
+            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
                 param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-                remove_attached_kfs_collision("kfs", "link6");
+                remove_attached_kfs_collision();
                 continue;
             }
-            feedback_msg->current_state  = 3;
+            feedback_msg->current_state  = 4;
             feedback_msg->state_describe = "机械臂到达放置KFS的位置";
             current_goal_handle->publish_feedback(feedback_msg);
             if (current_kfs_num
@@ -284,41 +311,46 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // remove_attached_kfs_collision("kfs", "link6");
                 continue;
             }
-            param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+            if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
+            }
+            else {
+                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+            }
             std::this_thread::sleep_for(2s);
 
-            remove_attached_kfs_collision("kfs", "link6");               // 清除附着的KFS
-            if (current_kfs_num == 0)
-                add_kfs_collision(kfs1_pos, "kfs1", "link6");
+            remove_attached_kfs_collision();               // 将KFS从吸盘上移除(（防止机械臂回退时在一开始就碰到KFS导致规划失败）
+            if (current_kfs_num == 0)                              // 根据当前机器人上的情况设置目标
+                move_group_interface->setNamedTarget("kfs1_detach_pos"); // 设置目标
             else if (current_kfs_num == 1)
-                add_kfs_collision(kfs2_pos, "kfs2", "link6");
+                move_group_interface->setNamedTarget("kfs2_detach_pos");
 
-
-            way_points[0] = move_group_interface->getCurrentPose().pose;
-
-            if (current_kfs_num == 0)
-                way_points[1] = arm_box1_ready_pos;
-            else if (current_kfs_num == 1)
-                way_points[1] = arm_box2_ready_pos;
-            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0,cart_trajectory, false);
-            if (fraction < 0.99) {
+            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            if (!success) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "机械臂回退与KFS分离时路径规划失败";
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            ret=move_group_interface->execute(plan);
-            if (ret!=moveit::core::MoveItErrorCode::SUCCESS) {
+            ret = move_group_interface->execute(plan);
+            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "用户取消机械臂执行，任务失败";
                 current_goal_handle->canceled(finished_msg);
                 continue;
             }
-            feedback_msg->current_state  = 4;
+            feedback_msg->current_state  = 5;
             feedback_msg->state_describe = "机械臂回退完成";
             current_goal_handle->publish_feedback(feedback_msg);
 
-            move_group_interface->setPoseTarget(arm_idel_pos);
+            //TODO:增添已经放置的障碍物，用于之后机械臂的碰撞计算
+            if(current_kfs_num==0)
+                add_kfs_collision(kfs1_pos, "kfs1", move_group_interface->getPlanningFrame());
+            else
+                add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());;
+            
+
+            move_group_interface->setNamedTarget("idel_pos");
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
             if (!success) {
                 finished_msg->kfs_num = current_kfs_num;
@@ -326,7 +358,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            feedback_msg->current_state  = 5;
+            feedback_msg->current_state  = 6;
             feedback_msg->state_describe = "机械臂到达空闲位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
@@ -341,39 +373,39 @@ void ArmHandleNode::arm_catch_task_handle() {
     RCLCPP_INFO(node->get_logger(), "退出机械臂任务处理线程");
 }
 
-bool ArmHandleNode::send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory) {
-    robot_interfaces::msg::Arm arm_msg;
-    auto start_time = std::chrono::high_resolution_clock::time_point::clock::now();
-    for (auto const& point : trajectory.joint_trajectory.points) {
-        double time_from_start = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9;
-        std::this_thread::sleep_until(start_time + std::chrono::duration<double>(time_from_start));
+// bool ArmHandleNode::send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory) {
+//     robot_interfaces::msg::Arm arm_msg;
+//     auto start_time = std::chrono::high_resolution_clock::time_point::clock::now();
+//     for (auto const& point : trajectory.joint_trajectory.points) {
+//         double time_from_start = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9;
+//         std::this_thread::sleep_until(start_time + std::chrono::duration<double>(time_from_start));
 
-        if (!rclcpp::ok())
-            return false;
+//         if (!rclcpp::ok())
+//             return false;
 
-        if (point.positions.size() != 6) {
-            RCLCPP_WARN(node->get_logger(), "不符合的关节数");
-            continue;
-        }
+//         if (point.positions.size() != 6) {
+//             RCLCPP_WARN(node->get_logger(), "不符合的关节数");
+//             continue;
+//         }
 
-        for (int i = 0; i < 6; i++) {
-            arm_msg.joints[i].rad   = (float)point.positions[i];
-            arm_msg.joints[i].omega = (float)point.velocities[i];
-        }
-        RCLCPP_INFO(node->get_logger(), "发布关节角期望");
-        arm_target_publisher->publish(arm_msg);
+//         for (int i = 0; i < 6; i++) {
+//             arm_msg.joints[i].rad   = (float)point.positions[i];
+//             arm_msg.joints[i].omega = (float)point.velocities[i];
+//         }
+//         RCLCPP_INFO(node->get_logger(), "发布关节角期望");
+//         arm_target_publisher->publish(arm_msg);
 
-        if (cancle_current_task)                            // 如果要求退出当前的动作执行
-        {
-            for (int i = 0; i < 6; i++) {
-                arm_msg.joints[i].omega = 0.0f;
-            }
-            arm_target_publisher->publish(arm_msg);
-            return false;
-        }
-    }
-    return true;
-}
+//         if (cancle_current_task)                            // 如果要求退出当前的动作执行
+//         {
+//             for (int i = 0; i < 6; i++) {
+//                 arm_msg.joints[i].omega = 0.0f;
+//             }
+//             arm_target_publisher->publish(arm_msg);
+//             return false;
+//         }
+//     }
+//     return true;
+// }
 
 geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(const geometry_msgs::msg::Pose& box_pos) {
     Eigen::Vector3d pos(box_pos.position.x, box_pos.position.y, box_pos.position.z);
@@ -387,11 +419,11 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(const geometry_msg
 /**
     @brief 根据父坐标系和期望位置，生成一个放置在某个位置的KFS
  */
-bool ArmHandleNode::add_attached_kfs_collision(const geometry_msgs::msg::Pose& pos, const std::string& object_id, const std::string& fram_id) {
+bool ArmHandleNode::add_attached_kfs_collision() {
     moveit_msgs::msg::AttachedCollisionObject collision_object;
-    collision_object.link_name              = fram_id;
-    collision_object.object.header.frame_id = fram_id;
-    collision_object.object.id              = object_id;
+    collision_object.link_name              = "link6";
+    collision_object.object.header.frame_id = "link6";
+    collision_object.object.id              = "kfs";
     shape_msgs::msg::SolidPrimitive primitive;
 
     primitive.type = primitive.BOX;
@@ -401,19 +433,21 @@ bool ArmHandleNode::add_attached_kfs_collision(const geometry_msgs::msg::Pose& p
     primitive.dimensions[primitive.BOX_Z] = 0.35;
 
     collision_object.object.primitives.push_back(primitive);
-    collision_object.object.primitive_poses.push_back(pos);
+    collision_object.object.primitive_poses.push_back(attached_kfs_pos);
     collision_object.object.operation = collision_object.object.ADD;
-    psi.applyAttachedCollisionObject(collision_object);
+    psi->applyAttachedCollisionObject(collision_object);
     return true;
 }
 
-bool ArmHandleNode::remove_attached_kfs_collision(const std::string& object_id, const std::string& fram_id) {
+bool ArmHandleNode::remove_attached_kfs_collision() {
     moveit_msgs::msg::AttachedCollisionObject collision_object;
-    collision_object.link_name              = fram_id;
-    collision_object.object.header.frame_id = fram_id;
-    collision_object.object.id              = object_id;
+    collision_object.link_name              = "link6";
+    collision_object.object.header.frame_id = "link6";
+    collision_object.object.id              = "kfs";
     collision_object.object.operation       = collision_object.object.REMOVE;
-    psi.applyAttachedCollisionObject(collision_object);
+    psi->applyAttachedCollisionObject(collision_object);
+
+    remove_kfs_collision("kfs", move_group_interface->getPlanningFrame());
     return true;
 }
 
@@ -432,7 +466,7 @@ bool ArmHandleNode::add_kfs_collision(const geometry_msgs::msg::Pose& pos, const
     collision_object.primitives.push_back(primitive);
     collision_object.primitive_poses.push_back(pos);
     collision_object.operation = collision_object.ADD;
-    psi.applyCollisionObject(collision_object);
+    psi->applyCollisionObject(collision_object);
     return true;
 }
 
@@ -441,6 +475,6 @@ bool ArmHandleNode::remove_kfs_collision(const std::string& object_id, const std
     collision_object.header.frame_id = fram_id;
     collision_object.id              = object_id;
     collision_object.operation       = collision_object.REMOVE;
-    psi.applyCollisionObject(collision_object);
+    psi->applyCollisionObject(collision_object);
     return true;
 }

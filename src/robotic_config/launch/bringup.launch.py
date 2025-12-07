@@ -29,7 +29,7 @@ def generate_launch_description():
             Node(
                 package="controller_manager",
                 executable="spawner",
-                arguments=["joint_state_broadcaster2", "--controller-manager", "/controller_manager"],
+                arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager"],
                 output="both"
             )
         ]
@@ -41,7 +41,7 @@ def generate_launch_description():
             Node(
                 package="controller_manager",
                 executable="spawner",
-                arguments=["robotic_arm_controller2", "--controller-manager", "/controller_manager"],
+                arguments=["robotic_arm_controller", "--controller-manager", "/controller_manager"],
                 output="both"
             )
         ]

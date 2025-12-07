@@ -68,21 +68,14 @@ private:
     geometry_msgs::msg::TransformStamped camera_link0_tf;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
 
-    //机械臂空闲状态下的位姿
-    geometry_msgs::msg::Pose arm_idel_pos;
-    geometry_msgs::msg::Pose arm_box1_ready_pos;    //方块1准备吸取位置
-    geometry_msgs::msg::Pose arm_box1_pos;          //方块1吸取位置
-    geometry_msgs::msg::Pose arm_box2_ready_pos;    //方块2准备吸取位置
-    geometry_msgs::msg::Pose arm_box2_pos;          //方块2吸取位置
-    geometry_msgs::msg::Pose arm_box3_hold_pos;     //方块3保持位置
-
+    
     geometry_msgs::msg::Pose kfs1_pos;
     geometry_msgs::msg::Pose kfs2_pos;
     geometry_msgs::msg::Pose attached_kfs_pos;
 
 
     //障碍物/KFS定义
-    moveit::planning_interface::PlanningSceneInterface psi;
+    std::shared_ptr<moveit::planning_interface::PlanningSceneInterface> psi;
     //moveit_msgs::msg::AttachedCollisionObject attached_kfs;
 
 
@@ -92,10 +85,10 @@ private:
 
     //机械臂动作处理
     void arm_catch_task_handle();
-    bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
+    //bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
     geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos);
-    bool add_attached_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
-    bool remove_attached_kfs_collision(const std::string &object_id,const std::string &fram_id);
+    bool add_attached_kfs_collision();
+    bool remove_attached_kfs_collision();
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
     bool remove_kfs_collision(const std::string &object_id,const std::string &fram_id);
 };

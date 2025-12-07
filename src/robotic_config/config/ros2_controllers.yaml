@@ -1,6 +1,14 @@
+# This config file is used by ros2_control
 controller_manager:
   ros__parameters:
-    update_rate: 100
+    update_rate: 100  # Hz
+
+    robotic_arm_controller:	#必须是你刚刚定义的控制器名字
+      type: joint_trajectory_controller/JointTrajectoryController
+
+
+    joint_state_broadcaster:	#自定义一个广播节点状态的广播者名字
+      type: joint_state_broadcaster/JointStateBroadcaster
 
 robotic_arm_controller:
   ros__parameters:
@@ -11,13 +19,9 @@ robotic_arm_controller:
       - joint4
       - joint5
       - joint6
-    command_interfaces:
+    command_interfaces:		#关节接受位置输入
       - position
-    state_interfaces:
+    state_interfaces:		#关节反馈位置和速度
       - position
       - velocity
     allow_nonzero_velocity_at_trajectory_end: true
-
-joint_state_broadcaster:
-  ros__parameters:
-    type: joint_state_broadcaster/JointStateBroadcaster

@@ -45,18 +45,23 @@ private:
         // ===== 填写目标位姿（camera_link 下的一个简单坐标）=====
 
 
-        goal_msg.target_pose.position.x = -0.002128;
-        goal_msg.target_pose.position.y = -0.279561;
-        goal_msg.target_pose.position.z = 0.757060;
+        //模拟的抓取位置姿
+        goal_msg.target_pose.position.x = 0.664748;
+        goal_msg.target_pose.position.y = -0.001824;
+        goal_msg.target_pose.position.z = 0.256471;
 
-        goal_msg.target_pose.orientation.w = 0.494101;  // 单位四元数
-        goal_msg.target_pose.orientation.x = -0.494456;
-        goal_msg.target_pose.orientation.y = 0.502310;
-        goal_msg.target_pose.orientation.z = 0.508982;
+        goal_msg.target_pose.orientation.w = 0.004481;  // 单位四元数
+        goal_msg.target_pose.orientation.x = 0.708322;
+        goal_msg.target_pose.orientation.y = -0.004257;
+        goal_msg.target_pose.orientation.z = -0.705862;
+
 
         // action 类型为 “移动”
-        goal_msg.action_type =  1;
+        // goal_msg.action_type =  1;
 
+        // action 类型为 “抓取”
+        goal_msg.action_type =  2;      //捕获目标在这个坐标的物体
+        
         auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
 
         send_goal_options.goal_response_callback =
