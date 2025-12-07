@@ -6,6 +6,7 @@
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
 #include <memory>
+#include <moveit/utils/moveit_error_code.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <string>
@@ -110,47 +111,46 @@ void ArmHandleNode::arm_catch_task_handle() {
     auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
     auto finished_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
 
-    // std::this_thread::sleep_for(5s); // 等待RVIZ2启动完成
-    // {                                // 为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
-    //     // 添加障碍物
-    //     moveit_msgs::msg::CollisionObject collision_object;
-    //     collision_object.header.frame_id = "base_link";
-    //     collision_object.id              = "institution";
-    //     collision_object.primitives.resize(4);
-    //     collision_object.primitive_poses.resize(4);
+    std::this_thread::sleep_for(5s); // 等待RVIZ2启动完成
+    {                                // 为规划环境增加四个竖起来的杆（R2上底盘抬升部分需要）
+        // 添加障碍物
+        moveit_msgs::msg::CollisionObject collision_object;
+        collision_object.header.frame_id = move_group_interface->getPlanningFrame();
+        collision_object.id              = "institution";
+        collision_object.primitives.resize(4);
+        collision_object.primitive_poses.resize(4);
 
-    //     geometry_msgs::msg::Pose collision_pos[4];
-    //     collision_pos[0].orientation.w = 1;
-    //     collision_pos[0].position.x    = -0.2;
-    //     collision_pos[0].position.y    = 0.2;
-    //     collision_pos[0].position.z    = 0.3;
+        collision_object.primitive_poses[0].orientation.w = 1;
+        collision_object.primitive_poses[0].position.x    = -0.2;
+        collision_object.primitive_poses[0].position.y    = 0.2;
+        collision_object.primitive_poses[0].position.z    = 0.3;
 
-    //     collision_pos[1].orientation.w = 1;
-    //     collision_pos[1].position.x    = 0.2;
-    //     collision_pos[1].position.y    = 0.2;
-    //     collision_pos[1].position.z    = 0.3;
+        collision_object.primitive_poses[1].orientation.w = 1;
+        collision_object.primitive_poses[1].position.x    = 0.2;
+        collision_object.primitive_poses[1].position.y    = 0.2;
+        collision_object.primitive_poses[1].position.z    = 0.3;
 
-    //     collision_pos[2].orientation.w = 1;
-    //     collision_pos[2].position.x    = -0.2;
-    //     collision_pos[2].position.y    = -0.2;
-    //     collision_pos[2].position.z    = 0.3;
+        collision_object.primitive_poses[2].orientation.w = 1;
+        collision_object.primitive_poses[2].position.x    = -0.2;
+        collision_object.primitive_poses[2].position.y    = -0.2;
+        collision_object.primitive_poses[2].position.z    = 0.3;
 
-    //     collision_pos[3].orientation.w = 1;
-    //     collision_pos[3].position.x    = 0.2;
-    //     collision_pos[3].position.y    = -0.2;
-    //     collision_pos[3].position.z    = 0.3;
+        collision_object.primitive_poses[3].orientation.w = 1;
+        collision_object.primitive_poses[3].position.x    = 0.2;
+        collision_object.primitive_poses[3].position.y    = -0.2;
+        collision_object.primitive_poses[3].position.z    = 0.3;
 
-    //     shape_msgs::msg::SolidPrimitive primitive;
-    //     collision_object.primitives[0].type = primitive.BOX;
-    //     collision_object.primitives[0].dimensions.resize(3);
-    //     collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.1;
-    //     collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.1;
-    //     collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
-    //     collision_object.primitives[3] = collision_object.primitives[2] = collision_object.primitives[1] = collision_object.primitives[0];
+        shape_msgs::msg::SolidPrimitive primitive;
+        collision_object.primitives[0].type = primitive.BOX;
+        collision_object.primitives[0].dimensions.resize(3);
+        collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.1;
+        collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.1;
+        collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
+        collision_object.primitives[3] = collision_object.primitives[2] = collision_object.primitives[1] = collision_object.primitives[0];
 
-    //     collision_object.operation = collision_object.ADD;
-    //     psi.applyCollisionObject(collision_object);                                      // 应用障碍物
-    // }
+        collision_object.operation = collision_object.ADD;
+        psi->applyCollisionObject(collision_object);                                      // 应用障碍物
+    }
 
     while (rclcpp::ok()) {
         is_running_arm_task = false;
@@ -349,7 +349,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             else
                 add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());;
             
-
             move_group_interface->setNamedTarget("idel_pos");
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
             if (!success) {
@@ -367,7 +366,98 @@ void ArmHandleNode::arm_catch_task_handle() {
             finished_msg->reason  = "成功抓取KFS并放置到机器人上";
             current_goal_handle->succeed(finished_msg);
         } else if (current_task_type == ROBOTIC_ARM_TASK_PLACE_TARGET) { // 将车上的KFS吸起来，然后放到某个坐标
-            // TODO:根据机器人上方块的实际位置计数，移动到固定的坐标准备抓取车上的KFS
+            if(current_kfs_num==0)  //如果当前机器人上没有KFS，报告后等待下一个请求
+                continue;
+            else if(current_kfs_num!=3)     //如果当前KFS是堆在机器人上的，那么使用机械臂取出来，如果是已经在手上拿着的，直接往目标位置放就可以了
+            {
+                std::string name_tag="kfs1";
+                if(current_kfs_num==2)
+                    name_tag="kfs2";
+
+                
+                move_group_interface->setNamedTarget(name_tag+"_detach_pos");    //到达准备吸取KFS的位置
+
+                auto success=move_group_interface->plan(plan);
+                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
+                {
+                    
+                }
+                success=move_group_interface->execute(plan);
+                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
+                {
+                    
+                }
+
+               
+                remove_kfs_collision(name_tag, move_group_interface->getPlanningFrame());
+                move_group_interface->setNamedTarget(name_tag+"_touch_pos");                                //到达吸取KFS的位置
+                success=move_group_interface->plan(plan);
+                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
+                {
+                    
+                }
+                success=move_group_interface->execute(plan);
+                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
+                {
+                    
+                }
+
+                std::vector<std::string> node_names = node->get_node_names();
+                if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                    RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能开启气泵");
+                }
+                else {
+                    param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
+                }
+
+                add_attached_kfs_collision();
+
+                std::this_thread::sleep_for(2s);
+            }
+            move_group_interface->setPoseTarget(task_target_pos);   //放置任务——要放置的坐标
+            move_group_interface->plan(plan);
+            move_group_interface->execute(plan);    //执行目标轨迹
+
+            std::vector<geometry_msgs::msg::Pose> way_points;
+            way_points.resize(2);
+            way_points[0] = task_target_pos;                                      // 当前位姿
+            auto temp=task_target_pos;
+            temp.position.x=temp.position.x+0.4;
+            way_points[1] = temp;                                                 // 最终抓取位姿为当前位姿+0.4m以便于将KFS放入格子
+            moveit_msgs::msg::RobotTrajectory cart_trajectory;
+            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
+            {
+                finished_msg->kfs_num = current_kfs_num;
+                finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
+                current_goal_handle->abort(finished_msg);
+                continue;
+            }
+            move_group_interface->execute(cart_trajectory);
+
+            std::vector<std::string> node_names = node->get_node_names();
+                if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                    RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
+                }
+                else {
+                    param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+                }
+            temp=way_points[0];
+            way_points[0]=way_points[1];
+            way_points[1]=temp;             //交换起点和终点
+            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
+            {
+                finished_msg->kfs_num = current_kfs_num;
+                finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
+                current_goal_handle->abort(finished_msg);
+                continue;
+            }
+            move_group_interface->execute(cart_trajectory);
+
+            move_group_interface->setNamedTarget("idel_pos");
+            move_group_interface->plan(plan);
+            move_group_interface->execute(plan);
         }
     }
     RCLCPP_INFO(node->get_logger(), "退出机械臂任务处理线程");
