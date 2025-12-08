@@ -48,7 +48,6 @@ public:
 private:
     rclcpp::Node::SharedPtr node;
     rclcpp_action::Server<robot_interfaces::action::Catch>::SharedPtr arm_handle_server;  //机械臂任务接口
-    rclcpp::Publisher<robot_interfaces::msg::Arm>::SharedPtr arm_target_publisher;         //关节目标
 
     std::mutex task_mutex_;             //用于线程同步
     std::condition_variable task_cv_;

@@ -15,6 +15,7 @@
 using namespace std::chrono_literals;
 
 ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
+
     this->node = node;                                                                                         // 以依赖注入的方式，传入要管理的节点
 
     param_client      = std::make_shared<rclcpp::SyncParametersClient>(node, "driver_node");
@@ -24,11 +25,9 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
         std::bind(&ArmHandleNode::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
         std::bind(&ArmHandleNode::cancel_goal, this, std::placeholders::_1), std::bind(&ArmHandleNode::handle_accepted, this, std::placeholders::_1)
     );
-    arm_target_publisher     = rclcpp::create_publisher<robot_interfaces::msg::Arm>(node, "myjoints_target", 10); // 创建发布者，发布关节空间的目标
     camera_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
-
     psi=std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
 
 
@@ -38,16 +37,16 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     attached_kfs_pos.position.z    = -0.24;
 
     kfs1_pos.orientation.w=1.0;
-    kfs1_pos.position.x=-0.460;
+    kfs1_pos.position.x=-0.455;
     kfs1_pos.position.y=0.0;
     kfs1_pos.position.z=0.275;
 
     kfs2_pos.orientation.w=1.0;
-    kfs2_pos.position.x=-0.460;
+    kfs2_pos.position.x=-0.455;
     kfs2_pos.position.y=0.0;
     kfs2_pos.position.z=0.275+0.350;
-
 }
+
 
 ArmHandleNode::~ArmHandleNode() {
     task_mutex_.lock();
@@ -121,30 +120,30 @@ void ArmHandleNode::arm_catch_task_handle() {
         collision_object.primitive_poses.resize(4);
 
         collision_object.primitive_poses[0].orientation.w = 1;
-        collision_object.primitive_poses[0].position.x    = -0.2;
-        collision_object.primitive_poses[0].position.y    = 0.2;
+        collision_object.primitive_poses[0].position.x    = -0.60;
+        collision_object.primitive_poses[0].position.y    = 0.35;
         collision_object.primitive_poses[0].position.z    = 0.3;
 
         collision_object.primitive_poses[1].orientation.w = 1;
-        collision_object.primitive_poses[1].position.x    = 0.2;
-        collision_object.primitive_poses[1].position.y    = 0.2;
+        collision_object.primitive_poses[1].position.x    = 0.05;
+        collision_object.primitive_poses[1].position.y    = 0.35;
         collision_object.primitive_poses[1].position.z    = 0.3;
 
         collision_object.primitive_poses[2].orientation.w = 1;
-        collision_object.primitive_poses[2].position.x    = -0.2;
-        collision_object.primitive_poses[2].position.y    = -0.2;
+        collision_object.primitive_poses[2].position.x    = -0.60;
+        collision_object.primitive_poses[2].position.y    = -0.35;
         collision_object.primitive_poses[2].position.z    = 0.3;
 
         collision_object.primitive_poses[3].orientation.w = 1;
-        collision_object.primitive_poses[3].position.x    = 0.2;
-        collision_object.primitive_poses[3].position.y    = -0.2;
+        collision_object.primitive_poses[3].position.x    = 0.05;
+        collision_object.primitive_poses[3].position.y    = -0.35;
         collision_object.primitive_poses[3].position.z    = 0.3;
 
         shape_msgs::msg::SolidPrimitive primitive;
         collision_object.primitives[0].type = primitive.BOX;
         collision_object.primitives[0].dimensions.resize(3);
-        collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.1;
-        collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.1;
+        collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.06;
+        collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.06;
         collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
         collision_object.primitives[3] = collision_object.primitives[2] = collision_object.primitives[1] = collision_object.primitives[0];
 
@@ -175,9 +174,11 @@ void ArmHandleNode::arm_catch_task_handle() {
         {
             move_group_interface->setPlanningTime(5);
             move_group_interface->setNumPlanningAttempts(100);
-            move_group_interface->setGoalOrientationTolerance(0.1);
-            move_group_interface->setGoalPositionTolerance(0.03);
             move_group_interface->setStartStateToCurrentState();
+            move_group_interface->setGoalOrientationTolerance(0.35);
+            move_group_interface->setGoalJointTolerance(0.2); // 单位 rad
+            move_group_interface->setGoalPositionTolerance(0.05); // 单位 m
+            move_group_interface->setGoalOrientationTolerance(0.2); // 单位 rad
             first_run = false;
         }
 
@@ -194,7 +195,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
                     finished_msg->reason  = "任务被客户端取消";
                     finished_msg->kfs_num = current_kfs_num;
-                    current_goal_handle->canceled(finished_msg);
+                    current_goal_handle->abort(finished_msg);
                 } else {
                     feedback_msg->current_state  = 1;
                     feedback_msg->state_describe = "机械臂移动到指定的位置";
@@ -219,22 +220,18 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            auto ret = move_group_interface->execute(plan);
-            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "用户取消机械臂执行，任务失败";
-                current_goal_handle->canceled(finished_msg);
-                continue;
-            }
+            move_group_interface->execute(plan);
             feedback_msg->current_state  = 1;
             feedback_msg->state_describe = "机械臂移动到待抓取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
-            auto start_pose = move_group_interface->getCurrentPose().pose;
+            //auto start_pose = move_group_interface->getCurrentPose().pose;
             std::vector<geometry_msgs::msg::Pose> way_points;
             way_points.resize(2);
-            way_points[0] = start_pose;                                                                  // 当前位姿
-            way_points[1] = task_target_pos;                                                             // 最终抓取位姿
+            way_points[0] = task_target_pos;                                                                  // 当前位姿
+            auto temp=way_points[0];
+            temp.position.x=temp.position.x+0.1;
+            way_points[1] = temp;                                                             // 最终抓取位姿
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
             if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
@@ -244,30 +241,23 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            ret = move_group_interface->execute(cart_trajectory);
-            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "用户取消机械臂执行，任务失败";
-                current_goal_handle->canceled(finished_msg);
-                continue;
-            }
+            move_group_interface->execute(cart_trajectory);
             feedback_msg->current_state  = 2;
             feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
+
             // 使用一个参数服务来启动气泵
-            std::vector<std::string> node_names = node->get_node_names();
-            if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-                RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
-            }
-            else {
-                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
-            }
-            
+            // std::vector<std::string> node_names = node->get_node_names();
+            // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+            //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
+            // }
+            // else {
+            //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
+            // }
 
             feedback_msg->current_state  = 3;
             feedback_msg->state_describe = "启动气泵吸取KFS";
             current_goal_handle->publish_feedback(feedback_msg);
-
             std::this_thread::sleep_for(2s);
             // 为机械臂末端连接一个KFS用于碰撞计算
             add_attached_kfs_collision();
@@ -288,15 +278,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 remove_attached_kfs_collision();
                 continue;
             }
-            ret = move_group_interface->execute(plan);
-            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "用户取消机械臂执行，任务失败";
-                current_goal_handle->canceled(finished_msg);
-                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-                remove_attached_kfs_collision();
-                continue;
-            }
+            move_group_interface->execute(plan);
+            
             feedback_msg->current_state  = 4;
             feedback_msg->state_describe = "机械臂到达放置KFS的位置";
             current_goal_handle->publish_feedback(feedback_msg);
@@ -311,12 +294,13 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // remove_attached_kfs_collision("kfs", "link6");
                 continue;
             }
-            if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-                RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
-            }
-            else {
-                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-            }
+
+            // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+            //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
+            // }
+            // else {
+            //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+            // }
             std::this_thread::sleep_for(2s);
 
             remove_attached_kfs_collision();               // 将KFS从吸盘上移除(（防止机械臂回退时在一开始就碰到KFS导致规划失败）
@@ -332,23 +316,37 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
-            ret = move_group_interface->execute(plan);
-            if (ret != moveit::core::MoveItErrorCode::SUCCESS) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "用户取消机械臂执行，任务失败";
-                current_goal_handle->canceled(finished_msg);
-                continue;
-            }
+            move_group_interface->execute(plan);
+            std::this_thread::sleep_for(1s);
+            
             feedback_msg->current_state  = 5;
             feedback_msg->state_describe = "机械臂回退完成";
             current_goal_handle->publish_feedback(feedback_msg);
 
-            //TODO:增添已经放置的障碍物，用于之后机械臂的碰撞计算
+            
+            std::this_thread::sleep_for(2s);
+            way_points[0]=move_group_interface->getCurrentPose().pose;
+            temp=way_points[0];
+            temp.position.z=temp.position.z+0.35;
+            way_points[1]=temp;
+            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
+            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
+            {
+                finished_msg->kfs_num = current_kfs_num;
+                finished_msg->reason  = "抓取时机械臂超出工作范围，机械臂上升失败"+std::to_string(fraction);
+                current_goal_handle->abort(finished_msg);
+                continue;
+            }
+            move_group_interface->execute(cart_trajectory);
+            std::this_thread::sleep_for(2s);
+
+
             if(current_kfs_num==0)
                 add_kfs_collision(kfs1_pos, "kfs1", move_group_interface->getPlanningFrame());
             else
-                add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());;
+                add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());
             
+            move_group_interface->setStartStateToCurrentState();
             move_group_interface->setNamedTarget("idel_pos");
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
             if (!success) {
@@ -357,6 +355,8 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
+            move_group_interface->execute(plan);
+
             feedback_msg->current_state  = 6;
             feedback_msg->state_describe = "机械臂到达空闲位置";
             current_goal_handle->publish_feedback(feedback_msg);
@@ -383,10 +383,6 @@ void ArmHandleNode::arm_catch_task_handle() {
                     
                 }
                 success=move_group_interface->execute(plan);
-                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
-                {
-                    
-                }
 
                
                 remove_kfs_collision(name_tag, move_group_interface->getPlanningFrame());
@@ -397,18 +393,14 @@ void ArmHandleNode::arm_catch_task_handle() {
                     
                 }
                 success=move_group_interface->execute(plan);
-                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
-                {
-                    
-                }
 
                 std::vector<std::string> node_names = node->get_node_names();
-                if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-                    RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能开启气泵");
-                }
-                else {
-                    param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
-                }
+                // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能开启气泵");
+                // }
+                // else {
+                //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
+                // }
 
                 add_attached_kfs_collision();
 
@@ -455,9 +447,9 @@ void ArmHandleNode::arm_catch_task_handle() {
             }
             move_group_interface->execute(cart_trajectory);
 
-            move_group_interface->setNamedTarget("idel_pos");
-            move_group_interface->plan(plan);
-            move_group_interface->execute(plan);
+            // move_group_interface->setNamedTarget("idel_pos");
+            // move_group_interface->plan(plan);
+            // move_group_interface->execute(plan);
         }
     }
     RCLCPP_INFO(node->get_logger(), "退出机械臂任务处理线程");

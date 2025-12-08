@@ -28,33 +28,33 @@
     </group_state>
     <group_state name="kfs1_detach_pos" group="robotic_arm">
         <joint name="joint1" value="0"/>
-        <joint name="joint2" value="-0.418878667"/>
-        <joint name="joint3" value="-2.740164611"/>
-        <joint name="joint4" value="0.750490944"/>
+        <joint name="joint2" value="-0.034906585"/>
+        <joint name="joint3" value="-2.635447168"/>
+        <joint name="joint4" value=" 1.082104135"/>
         <joint name="joint5" value="0"/>
         <joint name="joint6" value="3.1416"/>
     </group_state>
     <group_state name="kfs1_touch_pos" group="robotic_arm">
         <joint name="joint1" value="0"/>
-        <joint name="joint2" value="-0.314159"/>
-        <joint name="joint3" value="-2.705258056"/>
-        <joint name="joint4" value="0.802850778"/>
+        <joint name="joint2" value="-0.052359878"/>
+        <joint name="joint3" value="-2.530727412"/>
+        <joint name="joint4" value="1.064650843"/>
         <joint name="joint5" value="0"/>
         <joint name="joint6" value="3.1416"/>
     </group_state>
     <group_state name="kfs2_detach_pos" group="robotic_arm">
         <joint name="joint1" value="0"/>
-        <joint name="joint2" value="-0.750490944"/>
-        <joint name="joint3" value="-2.076940056"/>
-        <joint name="joint4" value="-0.261799167"/>
+        <joint name="joint2" value="-0.785398163"/>
+        <joint name="joint3" value="-2.181661563"/>
+        <joint name="joint4" value="-0.191986217"/>
         <joint name="joint5" value="0"/>
         <joint name="joint6" value="3.1416"/>
     </group_state>
     <group_state name="kfs2_touch_pos" group="robotic_arm">
         <joint name="joint1" value="0"/>
-        <joint name="joint2" value="-0.628318"/>
-        <joint name="joint3" value="-2.0420335"/>
-        <joint name="joint4" value="-0.174532778"/>
+        <joint name="joint2" value="-0.733038285"/>
+        <joint name="joint3" value="-2.16420827"/>
+        <joint name="joint4" value="-0.13962634"/>
         <joint name="joint5" value="0"/>
         <joint name="joint6" value="3.1416"/>
     </group_state>

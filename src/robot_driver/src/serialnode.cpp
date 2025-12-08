@@ -97,6 +97,7 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
         msg.joints[i].omega=arm_state->joints[i].omega;
         msg.joints[i].torque=arm_state->joints[i].torque;
     }
+    msg.joints[6].rad=arm_target.joints[6].rad; //欺骗Moveit认为不存在的关节6到达目标位置
     joint_publisher->publish(msg);
     RCLCPP_INFO(this->get_logger(), "发布电机状态");
 }
