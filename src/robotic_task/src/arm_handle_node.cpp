@@ -35,16 +35,6 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     attached_kfs_pos.position.x    = 0.0;
     attached_kfs_pos.position.y    = 0.0;
     attached_kfs_pos.position.z    = -0.24;
-
-    kfs1_pos.orientation.w=1.0;
-    kfs1_pos.position.x=-0.455;
-    kfs1_pos.position.y=0.0;
-    kfs1_pos.position.z=0.275;
-
-    kfs2_pos.orientation.w=1.0;
-    kfs2_pos.position.x=-0.455;
-    kfs2_pos.position.y=0.0;
-    kfs2_pos.position.z=0.275+0.350;
 }
 
 
@@ -172,13 +162,9 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
-            move_group_interface->setPlanningTime(5);
+            move_group_interface->setPlanningTime(2);
             move_group_interface->setNumPlanningAttempts(100);
-            move_group_interface->setStartStateToCurrentState();
-            move_group_interface->setGoalOrientationTolerance(0.35);
-            move_group_interface->setGoalJointTolerance(0.2); // 单位 rad
-            move_group_interface->setGoalPositionTolerance(0.05); // 单位 m
-            move_group_interface->setGoalOrientationTolerance(0.2); // 单位 rad
+            move_group_interface->setGoalOrientationTolerance(0.05);
             first_run = false;
         }
 
@@ -304,47 +290,12 @@ void ArmHandleNode::arm_catch_task_handle() {
             std::this_thread::sleep_for(2s);
 
             remove_attached_kfs_collision();               // 将KFS从吸盘上移除(（防止机械臂回退时在一开始就碰到KFS导致规划失败）
-            if (current_kfs_num == 0)                              // 根据当前机器人上的情况设置目标
-                move_group_interface->setNamedTarget("kfs1_detach_pos"); // 设置目标
-            else if (current_kfs_num == 1)
-                move_group_interface->setNamedTarget("kfs2_detach_pos");
-
-            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-            if (!success) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "机械臂回退与KFS分离时路径规划失败";
-                current_goal_handle->abort(finished_msg);
-                continue;
-            }
-            move_group_interface->execute(plan);
-            std::this_thread::sleep_for(1s);
-            
-            feedback_msg->current_state  = 5;
-            feedback_msg->state_describe = "机械臂回退完成";
-            current_goal_handle->publish_feedback(feedback_msg);
 
             
-            std::this_thread::sleep_for(2s);
-            way_points[0]=move_group_interface->getCurrentPose().pose;
-            temp=way_points[0];
-            temp.position.z=temp.position.z+0.35;
-            way_points[1]=temp;
-            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
-            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
-            {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "抓取时机械臂超出工作范围，机械臂上升失败"+std::to_string(fraction);
-                current_goal_handle->abort(finished_msg);
-                continue;
-            }
-            move_group_interface->execute(cart_trajectory);
-            std::this_thread::sleep_for(2s);
-
-
-            if(current_kfs_num==0)
-                add_kfs_collision(kfs1_pos, "kfs1", move_group_interface->getPlanningFrame());
-            else
-                add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());
+            // if(current_kfs_num==0)
+            //     add_kfs_collision(kfs1_pos, "kfs1", move_group_interface->getPlanningFrame());
+            // else
+            //     add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());
             
             move_group_interface->setStartStateToCurrentState();
             move_group_interface->setNamedTarget("idel_pos");
@@ -357,7 +308,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             }
             move_group_interface->execute(plan);
 
-            feedback_msg->current_state  = 6;
+            feedback_msg->current_state  = 5;
             feedback_msg->state_describe = "机械臂到达空闲位置";
             current_goal_handle->publish_feedback(feedback_msg);
 

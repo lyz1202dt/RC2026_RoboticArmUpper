@@ -68,8 +68,6 @@ private:
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
 
     
-    geometry_msgs::msg::Pose kfs1_pos;
-    geometry_msgs::msg::Pose kfs2_pos;
     geometry_msgs::msg::Pose attached_kfs_pos;
 
 
