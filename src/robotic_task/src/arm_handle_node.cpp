@@ -28,7 +28,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     camera_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
-    psi=std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
+    psi                      = std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
 
 
     attached_kfs_pos.orientation.w = 1.0;
@@ -138,7 +138,7 @@ void ArmHandleNode::arm_catch_task_handle() {
         collision_object.primitives[3] = collision_object.primitives[2] = collision_object.primitives[1] = collision_object.primitives[0];
 
         collision_object.operation = collision_object.ADD;
-        psi->applyCollisionObject(collision_object);                                      // 应用障碍物
+        psi->applyCollisionObject(collision_object);                                     // 应用障碍物
     }
 
     while (rclcpp::ok()) {
@@ -162,9 +162,9 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
-            move_group_interface->setPlanningTime(2);
-            move_group_interface->setNumPlanningAttempts(100);
-            move_group_interface->setGoalOrientationTolerance(0.05);
+            move_group_interface->setGoalJointTolerance(0.1);
+            move_group_interface->setGoalPositionTolerance(0.04);
+            move_group_interface->setGoalOrientationTolerance(0.2);
             first_run = false;
         }
 
@@ -211,16 +211,16 @@ void ArmHandleNode::arm_catch_task_handle() {
             feedback_msg->state_describe = "机械臂移动到待抓取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
-            //auto start_pose = move_group_interface->getCurrentPose().pose;
+            // auto start_pose = move_group_interface->getCurrentPose().pose;
             std::vector<geometry_msgs::msg::Pose> way_points;
             way_points.resize(2);
-            way_points[0] = task_target_pos;                                                                  // 当前位姿
-            auto temp=way_points[0];
-            temp.position.x=temp.position.x+0.1;
-            way_points[1] = temp;                                                             // 最终抓取位姿
+            way_points[0]   = task_target_pos; // 当前位姿
+            auto temp       = way_points[0];
+            temp.position.x = temp.position.x + 0.1;
+            way_points[1]   = temp;            // 最终抓取位姿
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
+            if (fraction < 0.995f)             // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
@@ -232,6 +232,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
+            std::this_thread::sleep_for(2s);
             // 使用一个参数服务来启动气泵
             // std::vector<std::string> node_names = node->get_node_names();
             // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
@@ -244,28 +245,30 @@ void ArmHandleNode::arm_catch_task_handle() {
             feedback_msg->current_state  = 3;
             feedback_msg->state_describe = "启动气泵吸取KFS";
             current_goal_handle->publish_feedback(feedback_msg);
-            std::this_thread::sleep_for(2s);
             // 为机械臂末端连接一个KFS用于碰撞计算
-            add_attached_kfs_collision();
+            // add_attached_kfs_collision();
 
-            if (current_kfs_num == 0)                              // 根据当前机器人上的情况设置目标
+            if (current_kfs_num == 0)                                   // 根据当前机器人上的情况设置目标
                 move_group_interface->setNamedTarget("kfs1_touch_pos"); // 设置目标
             else if (current_kfs_num == 1)
                 move_group_interface->setNamedTarget("kfs2_touch_pos");
             else
                 move_group_interface->setNamedTarget("kfs3_hold_pos");
-            
-            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-            if (!success) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "机械臂无法到达放置KFS的位置，路径规划失败";
-                current_goal_handle->abort(finished_msg);
-                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-                remove_attached_kfs_collision();
-                continue;
-            }
-            move_group_interface->execute(plan);
-            
+
+
+            do {
+                move_group_interface->setStartStateToCurrentState();
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                if (!success) {
+                    finished_msg->kfs_num = current_kfs_num;
+                    finished_msg->reason  = "机械臂无法到达放置KFS的位置，路径规划失败";
+                    current_goal_handle->abort(finished_msg);
+                    param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+                    // remove_attached_kfs_collision();
+                    continue;
+                }
+            } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS); // 如果执行失败那么尝试重新规划并执行
+
             feedback_msg->current_state  = 4;
             feedback_msg->state_describe = "机械臂到达放置KFS的位置";
             current_goal_handle->publish_feedback(feedback_msg);
@@ -287,26 +290,26 @@ void ArmHandleNode::arm_catch_task_handle() {
             // else {
             //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
             // }
-            std::this_thread::sleep_for(2s);
 
-            remove_attached_kfs_collision();               // 将KFS从吸盘上移除(（防止机械臂回退时在一开始就碰到KFS导致规划失败）
+            // remove_attached_kfs_collision();               // 将KFS从吸盘上移除(（防止机械臂回退时在一开始就碰到KFS导致规划失败）
 
-            
+
             // if(current_kfs_num==0)
             //     add_kfs_collision(kfs1_pos, "kfs1", move_group_interface->getPlanningFrame());
             // else
             //     add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());
-            
-            move_group_interface->setStartStateToCurrentState();
-            move_group_interface->setNamedTarget("idel_pos");
-            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-            if (!success) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "机械臂无法回到空闲位置，路径规划失败";
-                current_goal_handle->abort(finished_msg);
-                continue;
-            }
-            move_group_interface->execute(plan);
+
+            do {
+                move_group_interface->setStartStateToCurrentState();
+                move_group_interface->setNamedTarget("idel_pos");
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                if (!success) {
+                    finished_msg->kfs_num = current_kfs_num;
+                    finished_msg->reason  = "机械臂无法回到空闲位置，路径规划失败";
+                    current_goal_handle->abort(finished_msg);
+                    continue;
+                }
+            } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
 
             feedback_msg->current_state  = 5;
             feedback_msg->state_describe = "机械臂到达空闲位置";
@@ -317,33 +320,27 @@ void ArmHandleNode::arm_catch_task_handle() {
             finished_msg->reason  = "成功抓取KFS并放置到机器人上";
             current_goal_handle->succeed(finished_msg);
         } else if (current_task_type == ROBOTIC_ARM_TASK_PLACE_TARGET) { // 将车上的KFS吸起来，然后放到某个坐标
-            if(current_kfs_num==0)  //如果当前机器人上没有KFS，报告后等待下一个请求
+            if (current_kfs_num == 0)                                    // 如果当前机器人上没有KFS，报告后等待下一个请求
                 continue;
-            else if(current_kfs_num!=3)     //如果当前KFS是堆在机器人上的，那么使用机械臂取出来，如果是已经在手上拿着的，直接往目标位置放就可以了
+            else if (current_kfs_num != 3) // 如果当前KFS是堆在机器人上的，那么使用机械臂取出来，如果是已经在手上拿着的，直接往目标位置放就可以了
             {
-                std::string name_tag="kfs1";
-                if(current_kfs_num==2)
-                    name_tag="kfs2";
+                std::string name_tag = "kfs1";
+                if (current_kfs_num == 2)
+                    name_tag = "kfs2";
 
-                
-                move_group_interface->setNamedTarget(name_tag+"_detach_pos");    //到达准备吸取KFS的位置
 
-                auto success=move_group_interface->plan(plan);
-                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
-                {
-                    
-                }
-                success=move_group_interface->execute(plan);
+                move_group_interface->setNamedTarget(name_tag + "_detach_pos"); // 到达准备吸取KFS的位置
 
-               
+                auto success = move_group_interface->plan(plan);
+                if (success != moveit::core::MoveItErrorCode::SUCCESS) {}
+                success = move_group_interface->execute(plan);
+
+
                 remove_kfs_collision(name_tag, move_group_interface->getPlanningFrame());
-                move_group_interface->setNamedTarget(name_tag+"_touch_pos");                                //到达吸取KFS的位置
-                success=move_group_interface->plan(plan);
-                if(success!=moveit::core::MoveItErrorCode::SUCCESS)
-                {
-                    
-                }
-                success=move_group_interface->execute(plan);
+                move_group_interface->setNamedTarget(name_tag + "_touch_pos");  // 到达吸取KFS的位置
+                success = move_group_interface->plan(plan);
+                if (success != moveit::core::MoveItErrorCode::SUCCESS) {}
+                success = move_group_interface->execute(plan);
 
                 std::vector<std::string> node_names = node->get_node_names();
                 // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
@@ -357,19 +354,19 @@ void ArmHandleNode::arm_catch_task_handle() {
 
                 std::this_thread::sleep_for(2s);
             }
-            move_group_interface->setPoseTarget(task_target_pos);   //放置任务——要放置的坐标
+            move_group_interface->setPoseTarget(task_target_pos); // 放置任务——要放置的坐标
             move_group_interface->plan(plan);
-            move_group_interface->execute(plan);    //执行目标轨迹
+            move_group_interface->execute(plan);                  // 执行目标轨迹
 
             std::vector<geometry_msgs::msg::Pose> way_points;
             way_points.resize(2);
-            way_points[0] = task_target_pos;                                      // 当前位姿
-            auto temp=task_target_pos;
-            temp.position.x=temp.position.x+0.4;
-            way_points[1] = temp;                                                 // 最终抓取位姿为当前位姿+0.4m以便于将KFS放入格子
+            way_points[0]   = task_target_pos;                    // 当前位姿
+            auto temp       = task_target_pos;
+            temp.position.x = temp.position.x + 0.4;
+            way_points[1]   = temp;                               // 最终抓取位姿为当前位姿+0.4m以便于将KFS放入格子
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
+            if (fraction < 0.995f)                                // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
@@ -379,17 +376,16 @@ void ArmHandleNode::arm_catch_task_handle() {
             move_group_interface->execute(cart_trajectory);
 
             std::vector<std::string> node_names = node->get_node_names();
-                if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-                    RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
-                }
-                else {
-                    param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-                }
-            temp=way_points[0];
-            way_points[0]=way_points[1];
-            way_points[1]=temp;             //交换起点和终点
-            fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-            if (fraction < 0.995f)                                                                        // 如果轨迹生成失败
+            if (std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()) {
+                RCLCPP_WARN(node->get_logger(), "没有driver_node节点,不能关闭气泵");
+            } else {
+                param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
+            }
+            temp          = way_points[0];
+            way_points[0] = way_points[1];
+            way_points[1] = temp;                                 // 交换起点和终点
+            fraction      = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            if (fraction < 0.995f)                                // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";

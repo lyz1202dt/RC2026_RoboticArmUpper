@@ -25,7 +25,3 @@ robotic_arm_controller:
       - position
       - velocity
     allow_nonzero_velocity_at_trajectory_end: true
-
-    constraints:
-      goal_time: 0.5
-      stopped_velocity_tolerance: 0.2   # 停止时允许的速度误差
