@@ -26,6 +26,9 @@ class EffortCalcNode{
     std::string urdf_xml;
     std::shared_ptr<moveit::core::RobotState> robot_state;
     rclcpp::Node::SharedPtr node;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robo_desc_sub;
     rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr subscriber_;
     rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr publisher_;
+
+    bool first_run{true};
 };

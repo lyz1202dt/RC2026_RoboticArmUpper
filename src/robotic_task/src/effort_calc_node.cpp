@@ -1,4 +1,5 @@
 #include "effort_calc_node.hpp"
+#include "std_msgs/msg/string.hpp"
 
 EffortCalcNode::EffortCalcNode(const rclcpp::Node::SharedPtr& node) {
 
@@ -9,15 +10,31 @@ EffortCalcNode::EffortCalcNode(const rclcpp::Node::SharedPtr& node) {
 
     RCLCPP_INFO(node->get_logger(),"轨迹处理节点启动");
 
-    this->node->get_parameter("robot_description", urdf_xml);
+    //this->node->get_parameter("robot_description", urdf_xml);
 
-    kdl_parser::treeFromString(urdf_xml, tree);
-    tree.getChain("base_link", "link6", chain);
+    robo_desc_sub = node->create_subscription<std_msgs::msg::String>(
+    "robot_description", 10,
+    [this](const std_msgs::msg::String &msg) {
+        urdf_xml = msg.data;
+        RCLCPP_INFO(this->node->get_logger(),"订阅到消息2");
+    });
+    
+    
 
 
     subscriber_ = node->create_subscription<trajectory_msgs::msg::JointTrajectory>(
         "/robotic_arm_controller/joint_trajectory", 10, [this](const trajectory_msgs::msg::JointTrajectory& msg) {
             // TODO:计算力矩前馈值
+            RCLCPP_INFO(this->node->get_logger(),"订阅到消息");
+
+            if(first_run)
+            {
+                if(urdf_xml.empty())
+                    return;
+                first_run=false;
+                kdl_parser::treeFromString(urdf_xml, tree);
+                tree.getChain("base_link", "link6", chain);
+            }
 
             // 1. 重力向量
             KDL::Vector gravity(0.0, 0.0, -9.81);
@@ -73,6 +90,7 @@ EffortCalcNode::EffortCalcNode(const rclcpp::Node::SharedPtr& node) {
                 for (int i = 0; i < 6; i++) {
                     point.effort[i] = tau[i]; // 赋值给轨迹上的点
                 }
+                RCLCPP_INFO(this->node->get_logger(),"joint2_torque=%lf",point.effort[1]);
             }
 
             RCLCPP_INFO(this->node->get_logger(), "订阅到Moveit的下发轨迹，进行动力学计算并下发到ros2_control");

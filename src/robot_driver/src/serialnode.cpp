@@ -97,7 +97,7 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
         msg.joints[i].omega=arm_state->joints[i].omega;
         msg.joints[i].torque=arm_state->joints[i].torque;
     }
-    msg.joints[6].rad=arm_target.joints[6].rad; //欺骗Moveit认为不存在的关节6到达目标位置
+    msg.joints[5].rad=arm_target.joints[5].rad; //欺骗Moveit认为不存在的关节6到达目标位置
     joint_publisher->publish(msg);
     RCLCPP_INFO(this->get_logger(), "发布电机状态");
 }
@@ -109,5 +109,5 @@ void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
         arm_target.joints[i].torque=msg.joints[i].torque;
     }
     //cdc_trans->send_struct(legs_target); // 一旦订阅到最新的包，立即发送到下位机（下位机用定时器保证匀速率发送方便断开检测）
-    RCLCPP_INFO(this->get_logger(), "订阅到电机目标值");
+    RCLCPP_INFO(this->get_logger(), "订阅到电机目标值,torque2=%lf",msg.joints[1].torque);
 }
