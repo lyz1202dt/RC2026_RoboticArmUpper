@@ -38,6 +38,7 @@ endif()
 add_executable(robotic_task
   src/main.cpp
   src/arm_handle_node.cpp
+  src/effort_calc_node.cpp
 )
 
 add_executable(arm_test
