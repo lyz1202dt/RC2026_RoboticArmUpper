@@ -23,6 +23,9 @@ find_package(rclcpp_action REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
+find_package(kdl_parser REQUIRED)
+find_package(orocos_kdl REQUIRED)
+find_package(moveit_msgs REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -68,6 +71,7 @@ ament_target_dependencies(
   joint_trajectory_controller
   pluginlib
   hardware_interface
+  kdl_parser
 )
 
 ament_target_dependencies(mycontrol

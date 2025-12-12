@@ -1,5 +1,11 @@
 #pragma once
 
+#include <kdl/chain.hpp>
+#include <kdl/chaindynparam.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/frames.hpp>
+#include <kdl/tree.hpp>
+#include <kdl_parser/kdl_parser.hpp>
 #include <hardware_interface/loaned_command_interface.hpp>
 #include <hardware_interface/loaned_state_interface.hpp>
 #include <joint_trajectory_controller/joint_trajectory_controller.hpp>
@@ -22,14 +28,18 @@ public:
     controller_interface::InterfaceConfiguration state_interface_configuration() const override;
 
 private:
+
+    KDL::Tree tree;
+    KDL::Chain chain;
+    std::string urdf_xml;
+
+    KDL::JntArray dynamicCalc(const KDL::JntArray& q, const KDL::JntArray& q_dot, const KDL::JntArray& q_ddot);
     // effort command handles
     std::vector<hardware_interface::LoanedCommandInterface> effort_command_interfaces_;
 
     // Store joint names locally
     std::vector<std::string> joint_names_;
 
-    // ---- your dynamics model entry point ----
-    std::vector<double> compute_torque_ff(const std::vector<double>& q, const std::vector<double>& dq, const std::vector<double>& ddq);
 };
 
 } // namespace mixcontroller
