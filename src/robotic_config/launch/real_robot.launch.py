@@ -24,6 +24,16 @@ def generate_launch_description():
                 "use_sim_time": False
             }]
         )
+    
+    #启动前馈力矩计算节点
+    joint_dynamic_calc=Node(
+            package="my_controller",
+            executable="my_controller",
+            output="screen",
+            parameters=[{
+                "use_sim_time": False
+            }]
+        )
 
     #选择启动Moveit Setup Assistant生成的launch文件
     robot_description_launch=os.path.join(launch_dir,"rsp.launch.py")
@@ -40,4 +50,4 @@ def generate_launch_description():
     rviz_show=IncludeLaunchDescription(PythonLaunchDescriptionSource(rviz_launch))
 
 
-    return LaunchDescription([robot_description_launch_py,move_group,rviz_show,joint_driver,start_ros_control])
+    return LaunchDescription([robot_description_launch_py,move_group,rviz_show,joint_driver,joint_dynamic_calc,start_ros_control])

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(robotic_task)
+project(my_controller)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -9,20 +9,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(control_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(moveit_msgs REQUIRED)
-find_package(moveit_ros_planning_interface REQUIRED)
-find_package(moveit_core REQUIRED)
-find_package(builtin_interfaces REQUIRED)
-find_package(trajectory_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
-find_package(robot_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(kdl_parser REQUIRED)
+find_package(orocos_kdl REQUIRED)
+find_package(urdf REQUIRED)
+find_package(moveit_core REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -36,55 +35,35 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_executable(robotic_task
+add_executable(my_controller
   src/main.cpp
-  src/arm_handle_node.cpp
+  src/effort_calc_node.cpp
 )
 
-add_executable(arm_test
-  src/test.cpp
-)
-
-target_include_directories(robotic_task
+target_include_directories(my_controller
   PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/robotic_task>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/my_controller>
   $<INSTALL_INTERFACE:include>
 )
 
-ament_target_dependencies(robotic_task
+ament_target_dependencies(my_controller
   rclcpp
   rclcpp_action
+  moveit_core
   std_msgs
   builtin_interfaces
-  trajectory_msgs
-  moveit_ros_planning_interface
-  moveit_msgs
-  robot_interfaces
-  tf2_geometry_msgs
-  tf2
-  tf2_ros
   control_msgs
-  geometry_msgs
-)
-
-
-#机械臂测试任务
-ament_target_dependencies(arm_test
-  rclcpp
-  rclcpp_action
-  std_msgs
   trajectory_msgs
-  robot_interfaces
-  geometry_msgs
+  orocos_kdl
+  sensor_msgs
+  moveit_msgs
+  kdl_parser
 )
+
 
 install(TARGETS
-robotic_task arm_test
+my_controller
 DESTINATION lib/${PROJECT_NAME})
 
-# install(
-#   DIRECTORY launch
-#   DESTINATION share/${PROJECT_NAME}
-# )
 
 ament_package()

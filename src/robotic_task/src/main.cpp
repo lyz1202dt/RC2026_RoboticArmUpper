@@ -1,24 +1,12 @@
 #include <rclcpp/rclcpp.hpp>
-#include <thread>
 #include "arm_handle_node.hpp"
-#include "effort_calc_node.hpp"
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
-    auto node_task_handle=std::make_shared<rclcpp::Node>("arm_task_handle_node");
-    auto node_tarjectory_handle=std::make_shared<rclcpp::Node>("tarjectory_handle_node",rclcpp::NodeOptions().allow_undeclared_parameters(true));
-    auto arm_handle=std::make_shared<ArmHandleNode>(node_task_handle);
-    auto tarjectory_handle=std::make_shared<EffortCalcNode>(node_tarjectory_handle);
-
-
-    auto node_thread=std::thread([node_tarjectory_handle](){
-        RCLCPP_INFO(node_tarjectory_handle->get_logger(),"进入子线程计算动力学");
-        rclcpp::spin(node_tarjectory_handle);
-    });
-
-    rclcpp::spin(node_task_handle);
+    auto node=std::make_shared<rclcpp::Node>("arm_task_handle_node");
+    auto arm_handle=std::make_shared<ArmHandleNode>(node);
+    rclcpp::spin(node);
     rclcpp::shutdown();
-    node_thread.join();
     return 0;
 }
 
