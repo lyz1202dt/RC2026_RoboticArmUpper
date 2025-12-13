@@ -1,6 +1,6 @@
 <library path="mixcontroller">
   <class name="mixcontroller/MixController"
-         type="mixcontroller::MMixController"
+         type="mixcontroller::MixController"
          base_class_type="controller_interface::ControllerInterface">
     <description>扩展版机械臂控制器，支持位置/速度/力矩多接口+力矩前馈</description>
   </class>

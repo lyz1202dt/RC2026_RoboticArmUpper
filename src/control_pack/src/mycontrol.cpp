@@ -23,6 +23,7 @@ public:
             state_velocities_.push_back(0.0);
             command_positions_.push_back(0.0);
             command_effort_.push_back(0.0);
+            command_velocity_.push_back(0.0);
         }
         node        = std::make_shared<rclcpp::Node>("control_node");
         publisher_  = node->create_publisher<robot_interfaces::msg::Arm>("myjoints_target", 10);
@@ -53,6 +54,7 @@ public:
         command_interfaces.reserve(joint_names_.size());
         for (size_t i = 0; i < joint_names_.size(); ++i) {
             command_interfaces.emplace_back(joint_names_[i], "position", &command_positions_[i]);
+            command_interfaces.emplace_back(joint_names_[i], "velocity", &command_velocity_[i]);
             command_interfaces.emplace_back(joint_names_[i], "effort", &command_effort_[i]);
         }
         return command_interfaces;
@@ -96,6 +98,7 @@ private:
     std::vector<double> state_positions_;
     std::vector<double> state_velocities_;
     std::vector<double> command_positions_;
+    std::vector<double> command_velocity_;
     std::vector<double> command_effort_;
 };
 

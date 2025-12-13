@@ -18,6 +18,7 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[controller_config,
                     moveit_config.robot_description,
+                    {'hardware': 'arm_hw'}
         ],
         output="both"
     )

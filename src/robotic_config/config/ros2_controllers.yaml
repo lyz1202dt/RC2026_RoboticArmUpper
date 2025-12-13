@@ -2,9 +2,11 @@
 controller_manager:
   ros__parameters:
     update_rate: 100  # Hz
+    
+    hardware: arm_hw
 
     robotic_arm_controller:	#必须是你刚刚定义的控制器名字
-      type: joint_trajectory_controller/JointTrajectoryController
+      type: "mixcontroller/MixController"
 
 
     joint_state_broadcaster:	#自定义一个广播节点状态的广播者名字
@@ -28,6 +30,7 @@ robotic_arm_controller:
       - joint6
     command_interfaces:		#关节接受位置输入
       - position
+      - velocity
       - effort
     state_interfaces:		#关节反馈位置和速度
       - position

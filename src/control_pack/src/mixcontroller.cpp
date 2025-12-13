@@ -26,6 +26,7 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
         return ret;
     }
     // TODO:加载并解析URDF
+    RCLCPP_ERROR(get_node()->get_logger(), "尝试解析URDF");
     robot_description_param_ = std::make_shared<rclcpp::SyncParametersClient>(param_node, "/robot_state_publisher");
 
     auto params = robot_description_param_->get_parameters({"robot_description"});
@@ -67,6 +68,14 @@ controller_interface::CallbackReturn MixController::on_activate(const rclcpp_lif
     segment_start_ = current_trajectory_->begin();
     segment_end_   = std::next(segment_start_);
 
+    return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn MixController::on_deactivate(const rclcpp_lifecycle::State& previous_state) {
+    auto ret=joint_trajectory_controller::JointTrajectoryController::on_deactivate(previous_state);
+    if (ret != controller_interface::CallbackReturn::SUCCESS) {
+        return ret;
+    }
     return controller_interface::CallbackReturn::SUCCESS;
 }
 

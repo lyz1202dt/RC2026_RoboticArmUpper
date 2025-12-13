@@ -21,6 +21,7 @@
   <build_depend>rclcpp_lifecycle</build_depend>
   <build_depend>kdl_parser</build_depend>
   <build_depend>orocos_kdl</build_depend>
+  <build_depend>robot_interfaces</build_depend>
 
   <exec_depend>rclcpp</exec_depend>
   <exec_depend>rclcpp_action</exec_depend>
@@ -34,6 +35,7 @@
   <build_depend>orocos_kdl</build_depend>
   <exec_depend>ament_lint_auto</exec_depend>
   <exec_depend>ament_lint_common</exec_depend>
+  <exec_depend>robot_interfaces</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
