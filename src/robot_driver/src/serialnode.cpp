@@ -117,7 +117,7 @@ void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
 
     cur_sub_cnt++;
     if (cur_sub_cnt == subscrib_cnt) {
-        RCLCPP_INFO(this->get_logger(), "订阅到电机目标值,torque2=%lf", msg.joints[1].torque);
+        RCLCPP_INFO(this->get_logger(), "订阅到电机目标值,joint2.torque=%lf,omega=%lf", msg.joints[1].torque,msg.joints[1].omega);
         cur_sub_cnt = 0;
     }
 }

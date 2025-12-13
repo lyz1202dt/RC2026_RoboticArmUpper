@@ -79,7 +79,7 @@ public:
         robot_interfaces::msg::Arm msg;
         for (int i = 0; i < 6; i++) {
             msg.joints[i].rad    = (float)command_positions_[i];
-            msg.joints[i].omega  = 0.0f;
+            msg.joints[i].omega  = (float)command_velocity_[i];
             msg.joints[i].torque = (float)command_effort_[i];
         }
         publisher_->publish(msg);

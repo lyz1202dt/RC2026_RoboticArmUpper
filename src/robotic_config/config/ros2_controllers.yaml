@@ -2,7 +2,7 @@
 controller_manager:
   ros__parameters:
     update_rate: 100  # Hz
-    
+
     hardware: arm_hw
 
     robotic_arm_controller:	#必须是你刚刚定义的控制器名字
@@ -35,4 +35,4 @@ robotic_arm_controller:
     state_interfaces:		#关节反馈位置和速度
       - position
       - velocity
-    allow_nonzero_velocity_at_trajectory_end: true
+    allow_nonzero_velocity_at_trajectory_end: false
