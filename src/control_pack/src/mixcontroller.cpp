@@ -1,4 +1,11 @@
 #include "control_pack/mixcontroller.hpp"
+#include "trajectory_msgs/msg/joint_trajectory.hpp"
+#include <Eigen/src/Core/Matrix.h>
+#include <controller_interface/controller_interface_base.hpp>
+#include <cstddef>
+#include <joint_trajectory_controller/interpolation_methods.hpp>
+#include <kdl/jntarray.hpp>
+#include <memory>
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/logging.hpp>
 
@@ -8,7 +15,8 @@ MixController::MixController()
     : joint_trajectory_controller::JointTrajectoryController() {}
 
 controller_interface::CallbackReturn MixController::on_init() {
-    RCLCPP_INFO(this->get_node()->get_logger(), "HybridJointTrajectoryController::on_init()");
+    RCLCPP_INFO(this->get_node()->get_logger(), "混合控制器初始化");
+    param_node = std::make_shared<rclcpp::Node>("param_node");
     return joint_trajectory_controller::JointTrajectoryController::on_init();
 }
 
@@ -17,7 +25,18 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     if (ret != controller_interface::CallbackReturn::SUCCESS) {
         return ret;
     }
+    // TODO:加载并解析URDF
+    robot_description_param_ = std::make_shared<rclcpp::SyncParametersClient>(param_node, "/robot_state_publisher");
 
+    auto params = robot_description_param_->get_parameters({"robot_description"});
+    urdf_xml    = params[0].as_string();
+    if (urdf_xml.empty()) {
+        RCLCPP_ERROR(get_node()->get_logger(), "无法读取URDF文件，不能进行动力学计算");
+        return controller_interface::CallbackReturn::ERROR;
+    }
+
+    kdl_parser::treeFromString(urdf_xml, tree);
+    tree.getChain("base_link", "link6", chain);
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -27,55 +46,68 @@ controller_interface::CallbackReturn MixController::on_activate(const rclcpp_lif
         return ret;
     }
 
-    // Bind effort command interfaces
+    // 从父类维护的command_interfaces_拿到力矩接口，方便自行控制
     effort_command_interfaces_.clear();
+    velocity_command_interfaces_.clear();
     for (const auto& joint : joint_names_) {
         for (auto& ci : command_interfaces_) {
             if (ci.get_name() == joint + "/effort") {
                 effort_command_interfaces_.push_back(std::move(ci));
+            } else if (ci.get_name() == joint + "/velocity") {
+                velocity_command_interfaces_.push_back(std::move(ci));
             }
         }
     }
 
-    if (effort_command_interfaces_.size() != joint_names_.size()) {
-        RCLCPP_ERROR(this->get_node()->get_logger(), "Not enough effort interfaces found");
+    if (effort_command_interfaces_.size() != joint_names_.size() || velocity_command_interfaces_.size() != joint_names_.size()) { // 确认是否拿全
+        RCLCPP_ERROR(this->get_node()->get_logger(), "控制器接口不全");
         return controller_interface::CallbackReturn::ERROR;
     }
+
+    segment_start_ = current_trajectory_->begin();
+    segment_end_   = std::next(segment_start_);
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::return_type MixController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
-    // 1. Parent controller handles trajectory sampling and writes position commands
-    auto ret = joint_trajectory_controller::JointTrajectoryController::update(time, period);
+
+    auto ret = joint_trajectory_controller::JointTrajectoryController::update(time, period); // 父类执行一次update维护轨迹更新
     if (ret != controller_interface::return_type::OK) {
         return ret;
     }
 
-    // 2. Read current (state) and desired (command) values
-    std::vector<double> q(joint_names_.size());
-    std::vector<double> dq(joint_names_.size());
-    std::vector<double> ddq(joint_names_.size());
 
-    for (size_t i = 0; i < joint_names_.size(); ++i) {
-        const auto& si_pos = state_interfaces_[2 * i + 0];
-        const auto& si_vel = state_interfaces_[2 * i + 1];
-        q[i]               = si_pos.get_value();
-        dq[i]              = si_vel.get_value();
+    trajectory_msgs::msg::JointTrajectoryPoint output_state;
+    auto valid = current_trajectory_->sample(
+        time, joint_trajectory_controller::interpolation_methods::InterpolationMethod::VARIABLE_DEGREE_SPLINE, output_state, segment_start_,
+        segment_end_
+    );
 
-        // get desired acceleration from trajectory
-        // already computed by parent
-        // ddq[i] = computed_command_acc_[i];
+    if (!valid) {
+        return controller_interface::return_type::OK;
     }
 
-    // 3. Compute torque feedforward
-    //std::vector<double> tau_ff = compute_torque_ff(q, dq, ddq);
+    KDL::JntArray q(joint_names_.size());
+    KDL::JntArray dq(joint_names_.size());
+    KDL::JntArray ddq(joint_names_.size());
 
-    // 4. Write torque commands
-    // for (size_t i = 0; i < tau_ff.size(); ++i) {
-    //   effort_command_interfaces_[i].set_value(tau_ff[i]);
-    // }
+    for (size_t i = 0; i < joint_names_.size(); i++)                                         // 填写轨迹位置/速度/加速度信息
+    {
+        q(i)   = output_state.positions[i];
+        dq(i)  = output_state.velocities[i];
+        ddq(i) = output_state.accelerations[i];
+    }
 
+    auto effort = dynamicCalc(q, dq, ddq);                                                   // 计算力矩前馈值
+
+    for (size_t i = 0; i < joint_names_.size(); i++)                                         // 将计算结果写入硬件层
+    {
+        velocity_command_interfaces_[i].set_value(dq(i));
+        effort_command_interfaces_[i].set_value(effort(i));
+    }
+
+    RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新");
     return controller_interface::return_type::OK;
 }
 
@@ -85,6 +117,7 @@ controller_interface::InterfaceConfiguration MixController::command_interface_co
 
     for (const auto& name : joint_names_) {
         cfg.names.push_back(name + "/position");
+        cfg.names.push_back(name + "/velocity");
         cfg.names.push_back(name + "/effort");
     }
     return cfg;
@@ -145,7 +178,6 @@ KDL::JntArray MixController::dynamicCalc(const KDL::JntArray& q, const KDL::JntA
     }
     return effort;
 }
-
 
 
 } // namespace mixcontroller

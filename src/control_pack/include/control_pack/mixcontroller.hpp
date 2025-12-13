@@ -32,9 +32,15 @@ private:
     KDL::Tree tree;
     KDL::Chain chain;
     std::string urdf_xml;
+    rclcpp::Node::SharedPtr param_node;
 
+    joint_trajectory_controller::TrajectoryPointConstIter segment_start_;
+    joint_trajectory_controller::TrajectoryPointConstIter segment_end_;
+
+    rclcpp::SyncParametersClient::SharedPtr robot_description_param_;
     KDL::JntArray dynamicCalc(const KDL::JntArray& q, const KDL::JntArray& q_dot, const KDL::JntArray& q_ddot);
-    // effort command handles
+    
+    std::vector<hardware_interface::LoanedCommandInterface> velocity_command_interfaces_;
     std::vector<hardware_interface::LoanedCommandInterface> effort_command_interfaces_;
 
     // Store joint names locally
