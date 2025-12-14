@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(control_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
@@ -62,6 +63,7 @@ ament_target_dependencies(robotic_task
   tf2_geometry_msgs
   tf2
   tf2_ros
+  control_msgs
   geometry_msgs
 )
 

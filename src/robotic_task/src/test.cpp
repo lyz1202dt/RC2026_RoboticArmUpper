@@ -60,7 +60,7 @@ private:
         // goal_msg.action_type =  1;
 
         // action 类型为 “抓取”
-        goal_msg.action_type =  3;      //捕获目标在这个坐标的物体
+        goal_msg.action_type =  2;      //捕获目标在这个坐标的物体
         
         auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
 

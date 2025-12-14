@@ -165,8 +165,8 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
-            move_group_interface->setGoalJointTolerance(0.1);
-            move_group_interface->setGoalPositionTolerance(0.04);
+            move_group_interface->setGoalJointTolerance(0.13);
+            move_group_interface->setGoalPositionTolerance(0.06);
             move_group_interface->setGoalOrientationTolerance(0.2);
             first_run = false;
         }

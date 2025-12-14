@@ -32,6 +32,11 @@ private:
     Arm_t arm_target;
     std::vector<double> joint_pos;
     std::vector<double> joint_vel;
+
+    int subscrib_cnt{20};
+    int publish_cnt{100};
+    int cur_sub_cnt{0};
+    int cur_pub_cnt{0};
 };
 
 #endif
