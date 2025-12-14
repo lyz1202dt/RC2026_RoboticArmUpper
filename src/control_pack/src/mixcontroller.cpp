@@ -1,5 +1,6 @@
 #include "control_pack/mixcontroller.hpp"
 #include <Eigen/src/Core/Matrix.h>
+#include <chrono>
 #include <memory>
 #include <rclcpp/time.hpp>
 #include <rclcpp_action/server.hpp>
@@ -7,11 +8,98 @@
 
 namespace mixcontroller {
 
-MixController::MixController() {}
+void QuinticParam::set_param(
+    const double t0, const double t1, const double p0, const double v0, const double a0, const double pt, const double v1, const double at
+) {
+    double T  = t1 - t0;
+    double T2 = T * T;
+    double T3 = T2 * T;
+    double T4 = T3 * T;
+    double T5 = T4 * T;
+
+    f = p0;
+    e = v0;
+    d = a0 / 2.0;
+    a = (12 * (pt - p0) - 6 * (v1 + v0) * T - (at - a0) * T2) / (2 * T5);
+    b = (-30 * (pt - p0) + (14 * v1 + 16 * v0) * T + (3 * a0 - 2 * at) * T2) / (2 * T4);
+    c = (20 * (pt - p0) - (8 * v1 + 12 * v0) * T - (3 * a0 - at) * T2) / (2 * T3);
+}
+double QuinticParam::get_pos(const double t) {
+    if (t <= t0)
+        return f;
+    if (t >= t1) {
+        const double T = t1 - t0;
+        return a * T * T * T * T * T + b * T * T * T * T + c * T * T * T + d * T * T + e * T + f;
+    }
+
+    const double tau = t - t0;
+    return a * tau * tau * tau * tau * tau + b * tau * tau * tau * tau + c * tau * tau * tau + d * tau * tau + e * tau + f;
+}
+
+double QuinticParam::get_vel(const double t) {
+    if (t <= t0)
+        return e;
+    if (t >= t1) {
+        const double T = t1 - t0;
+        return 5 * a * T * T * T * T + 4 * b * T * T * T + 3 * c * T * T + 2 * d * T + e;
+    }
+
+    const double tau = t - t0;
+    return 5 * a * tau * tau * tau * tau + 4 * b * tau * tau * tau + 3 * c * tau * tau + 2 * d * tau + e;
+}
+
+double QuinticParam::get_acc(const double t) {
+    if (t <= t0)
+        return 2.0 * d;
+    if (t >= t1) {
+        const double T = t1 - t0;
+        return 20 * a * T * T * T + 12 * b * T * T + 6 * c * T + 2 * d;
+    }
+
+    const double tau = t - t0;
+    return 20 * a * tau * tau * tau + 12 * b * tau * tau + 6 * c * tau + 2 * d;
+}
+
+ContinuousTrajectory::ContinuousTrajectory() { cur_index = 0; }
+
+bool ContinuousTrajectory::get_target(const rclcpp::Time& time, trajectory_msgs::msg::JointTrajectoryPoint& output) {
+    bool success = true;
+    auto dt      = time - start_time;
+    while (dt >= trajectory.points[cur_index].time_from_start) {
+        cur_index++;
+        if(cur_index==trajectory.points.size())
+            break;
+        double t0 = trajectory.points[cur_index].time_from_start.nanosec * 1e-9 + trajectory.points[cur_index].time_from_start.sec;
+        double t1 = trajectory.points[cur_index - 1].time_from_start.nanosec * 1e-9 + trajectory.points[cur_index - 1].time_from_start.sec;
+        for (int i = 0; i < 6; i++) {
+            auto& P0 = trajectory.points[cur_index - 1];
+            auto& PT = trajectory.points[cur_index];
+
+            line[i].set_param(t0, t1, P0.positions[i], P0.velocities[i], P0.accelerations[i], PT.positions[i], PT.velocities[i], PT.accelerations[i]);
+        }
+    }
+    if (trajectory.points.size() == cur_index) // 轨迹已经执行完毕
+        return false;
+    for (int i = 0; i < 6; i++)                // 计算插值结果
+    {
+        output.positions[i]     = line[i].get_pos(dt.seconds());
+        output.velocities[i]    = line[i].get_vel(dt.seconds());
+        output.accelerations[i] = line[i].get_acc(dt.seconds());
+    }
+    return success;
+}
+
+void ContinuousTrajectory::start_track(rclcpp::Time now) {
+    this->start_time = std::move(now);
+    cur_index        = 0;
+}
+
+void ContinuousTrajectory::set_trajectory(const trajectory_msgs::msg::JointTrajectory& trajectory) { this->trajectory = trajectory; }
+
+MixController::MixController() { param_node = std::make_shared<rclcpp::Node>("param_node"); }
 
 controller_interface::CallbackReturn MixController::on_init() {
     RCLCPP_INFO(this->get_node()->get_logger(), "混合控制器初始化");
-    param_node = std::make_shared<rclcpp::Node>("param_node");
 
     trajectory_action_server_ = rclcpp_action::create_server<control_msgs::action::FollowJointTrajectory>(
         get_node(), "robotic_arm_controller/arm_command", std::bind(&MixController::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
@@ -22,7 +110,7 @@ controller_interface::CallbackReturn MixController::on_init() {
     feedback_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Feedback>();
     joint_names_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
 
-    size_t dof=joint_names_.size();
+    size_t dof = joint_names_.size();
     q_kdl.resize(dof);
     dq_kdl.resize(dof);
     ddq_kdl.resize(dof);
@@ -30,10 +118,15 @@ controller_interface::CallbackReturn MixController::on_init() {
     M_kdl.resize(dof);
     G_kdl.resize(dof);
 
+    output_state.positions.resize(dof);
+    output_state.velocities.resize(dof);
+    output_state.accelerations.resize(dof);
+
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn MixController::on_configure(const rclcpp_lifecycle::State& previous_state) {
+    (void)previous_state;
     // TODO:加载并解析URDF
     RCLCPP_INFO(get_node()->get_logger(), "尝试解析URDF");
     robot_description_param_ = std::make_shared<rclcpp::SyncParametersClient>(param_node, "/robot_state_publisher");
@@ -52,48 +145,31 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     gravity.y(0.0);
     gravity.z(-9.81);
 
-
     dyn = std::make_shared<KDL::ChainDynParam>(chain, gravity);
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn MixController::on_activate(const rclcpp_lifecycle::State& previous_state) {
+    (void)previous_state;
     RCLCPP_INFO(this->get_node()->get_logger(), "激活控制器");
-    // reset_trajectory();
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn MixController::on_deactivate(const rclcpp_lifecycle::State& previous_state) {
+    (void)previous_state;
     RCLCPP_INFO(this->get_node()->get_logger(), "停用控制器");
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::return_type MixController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
     if (!is_execut_trajectory) {
-        //RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新(未发送)");
+        // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新(未发送)");
         return controller_interface::return_type::OK;
     }
-    trajectory_msgs::msg::JointTrajectoryPoint output_state;
-    // TODO:插值计算输出
-    auto now = get_node()->get_clock()->now();
 
-    while ((now - trajectory_start_time > current_trajectory_.points[trajectory_index_].time_from_start)) // 计算索引
-    {
-        if (trajectory_index_ < current_trajectory_.points.size())
-            trajectory_index_++;
-        else
-        {
-            trajectory_index_ =current_trajectory_.points.size()-1;
-            break;
-        }
-    }
-
-
-    // TODO:之后做更精确的插值
-    output_state = current_trajectory_.points[trajectory_index_];
-
-
+    // 五次多项式插值计算输出
+    bool ret = continue_trajectory.get_target(time, output_state);
 
     for (size_t i = 0; i < joint_names_.size(); i++) // 填写轨迹位置/速度/加速度信息
     {
@@ -114,8 +190,8 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
 
     // TODO:实时反馈
     feedback_msg->joint_names        = joint_names_;
-    feedback_msg->desired.positions  = current_trajectory_.points[trajectory_index_].positions;
-    feedback_msg->desired.velocities = current_trajectory_.points[trajectory_index_].velocities;
+    feedback_msg->desired.positions  = output_state.positions;
+    feedback_msg->desired.velocities = output_state.velocities;
 
     feedback_msg->actual.positions.resize(joint_names_.size());
     feedback_msg->actual.velocities.resize(joint_names_.size());
@@ -129,14 +205,14 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
     activate_goal_handle_->publish_feedback(feedback_msg);
 
     // 通知轨迹完成
-    if (trajectory_index_ == current_trajectory_.points.size() - 1) { // 如果这点是最后一个点，那么发送完成状态，然后重置执行器状态
+    if (!ret) { // 如果这点是最后一个点，那么发送完成状态
         is_execut_trajectory     = false;
         result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
         result_msg->error_string = "Trajectory finished";
         activate_goal_handle_->succeed(result_msg);
     }
 
-    //RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新");
+    // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新");
     return controller_interface::return_type::OK;
 }
 
@@ -169,9 +245,7 @@ rclcpp_action::GoalResponse MixController::handle_goal(
     if (is_execut_trajectory)
         return rclcpp_action::GoalResponse::REJECT;
     cancle_execut = false;
-
-    current_trajectory_ = goal->trajectory;
-    trajectory_index_   = 0;
+    continue_trajectory.set_trajectory(goal->trajectory);            // 设置要执行的轨迹
 
     RCLCPP_INFO(this->get_node()->get_logger(), "接受轨迹");
     return rclcpp_action::GoalResponse ::ACCEPT_AND_EXECUTE;
@@ -179,6 +253,7 @@ rclcpp_action::GoalResponse MixController::handle_goal(
 
 rclcpp_action::CancelResponse
     MixController::handle_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle) {
+    (void)goal_handle;
     is_execut_trajectory = false;
     cancle_execut        = true;
     return rclcpp_action::CancelResponse::ACCEPT;
@@ -188,7 +263,7 @@ void MixController::handle_accepted(const std::shared_ptr<rclcpp_action::ServerG
     is_execut_trajectory  = true;
     activate_goal_handle_ = goal_handle;
     RCLCPP_INFO(this->get_node()->get_logger(), "执行轨迹");
-    trajectory_start_time = get_node()->get_clock()->now();
+    continue_trajectory.start_track(get_node()->get_clock()->now()); // 开始执行轨迹
 }
 
 Eigen::Vector<double, 6> MixController::dynamicCalc() {
