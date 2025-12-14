@@ -46,9 +46,9 @@ private:
 
 
         //模拟的抓取位置姿
-        goal_msg.target_pose.position.x = 0.664748;
-        goal_msg.target_pose.position.y = -0.001824;
-        goal_msg.target_pose.position.z = 0.256471;
+        goal_msg.target_pose.position.x = 0.0;//0.664748;
+        goal_msg.target_pose.position.y = 0.0;//-0.001824;
+        goal_msg.target_pose.position.z = 0.5;//0.256471;
 
         goal_msg.target_pose.orientation.w = 0.004481;  // 单位四元数
         goal_msg.target_pose.orientation.x = 0.708322;

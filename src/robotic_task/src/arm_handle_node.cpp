@@ -2,6 +2,7 @@
 #include "geometry_msgs/msg/pose.hpp"
 #include "moveit_msgs/msg/attached_collision_object.hpp"
 #include "shape_msgs/msg/solid_primitive.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
@@ -30,8 +31,46 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
     psi                      = std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
 
+    mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_mark", 10);
 
-    attached_kfs_pos.orientation.w = 1.0;
+    node->create_wall_timer(100ms, [this]() {
+        if(!is_running_arm_task)    //如果此时没有进行机械臂抓取，那么立即返回
+            return;
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = "base_link";
+        marker.header.stamp    = this->node->now();
+
+        marker.ns = "kfs_pos";
+        marker.id = 0;
+
+        marker.type   = visualization_msgs::msg::Marker::SPHERE;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+
+        // 球心位置
+        marker.pose = task_target_pos;
+
+        // 姿态（球体无关，但必须合法）
+        marker.pose.orientation.w = 1.0;
+
+        // 尺寸（直径，单位 m）
+        marker.scale.x = 0.08;
+        marker.scale.y = 0.08;
+        marker.scale.z = 0.08;
+
+        // 颜色
+        marker.color.r = 1.0;
+        marker.color.g = 0.0;
+        marker.color.b = 0.0;
+        marker.color.a = 0.5;
+
+        marker.lifetime.sec=1;  //不再发布位置1s后删除
+        marker.lifetime.nanosec=0;
+
+        mark_pub_->publish(marker);
+    });
+
+
+    attached_kfs_pos.orientation.w = 1.0;   //附着在吸盘上的KFS与机器人的相对关系
     attached_kfs_pos.position.x    = 0.0;
     attached_kfs_pos.position.y    = 0.0;
     attached_kfs_pos.position.z    = -0.24;
@@ -54,17 +93,27 @@ rclcpp_action::GoalResponse
     if (is_running_arm_task) // 如果正在运行机械臂动作，那么拒绝新的请求
         return rclcpp_action::GoalResponse::REJECT;
 
-    // try {
-    //     camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
-    // } catch (const tf2::TransformException& ex) {
-    //     RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
-    //     return rclcpp_action::GoalResponse::REJECT;
-    // }
+    try {
+        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
+        return rclcpp_action::GoalResponse::REJECT;
+    }
 
     // Transform the pose manually
     // geometry_msgs::msg::Pose transformed_pose;
-    // tf2::doTransform(goal->target_pose, transformed_pose, camera_link0_tf);
-    task_target_pos   = goal->target_pose;
+    tf2::doTransform(goal->target_pose, task_target_pos, camera_link0_tf);
+
+    // task_target_pos   = goal->target_pose;
+    // TODO:姿态一定是大约朝前的，所以这里定死姿态
+    RCLCPP_INFO(node->get_logger(),"实际位置为(%lf,%lf,%lf)",task_target_pos.position.x,task_target_pos.position.y,task_target_pos.position.z);
+
+    task_target_pos.orientation.w = 0.004481;
+    task_target_pos.orientation.x = 0.708322;
+    task_target_pos.orientation.y = -0.004257;
+    task_target_pos.orientation.z = -0.705862;
+
+
     current_task_type = goal->action_type;
 
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;

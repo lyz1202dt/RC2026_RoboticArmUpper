@@ -1,8 +1,10 @@
 #pragma once
 
+#include "visualization_msgs/msg/marker.hpp"
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/parameter_client.hpp>
+#include <rclcpp/publisher.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.hpp>
@@ -66,6 +68,8 @@ private:
     std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
     geometry_msgs::msg::TransformStamped camera_link0_tf;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
+
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr mark_pub_;
 
     
     geometry_msgs::msg::Pose attached_kfs_pos;

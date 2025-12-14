@@ -24,6 +24,18 @@ def generate_launch_description():
                 "use_sim_time": False
             }]
         )
+    
+    #发布相机到关节1的静态坐标变换x+90,y+90,z+90
+    static_tf = Node(
+    package='tf2_ros',
+    executable='static_transform_publisher',
+    arguments=[
+        '0.04023', '-0.20514', '0.26134',
+        '1.570796', '-1.570796', '1.570796',
+        'link1', 'camera_link'
+    ]
+)
+
 
     #选择启动Moveit Setup Assistant生成的launch文件
     robot_description_launch=os.path.join(launch_dir,"rsp.launch.py")
@@ -40,4 +52,4 @@ def generate_launch_description():
     rviz_show=IncludeLaunchDescription(PythonLaunchDescriptionSource(rviz_launch))
 
 
-    return LaunchDescription([robot_description_launch_py,move_group,rviz_show,joint_driver,start_ros_control])
+    return LaunchDescription([static_tf,robot_description_launch_py,move_group,rviz_show,joint_driver,start_ros_control])
