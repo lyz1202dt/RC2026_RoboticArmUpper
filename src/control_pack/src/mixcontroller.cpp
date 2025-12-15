@@ -23,6 +23,9 @@ void QuinticParam::set_param(
     a = (12 * (pt - p0) - 6 * (v1 + v0) * T - (at - a0) * T2) / (2 * T5);
     b = (-30 * (pt - p0) + (14 * v1 + 16 * v0) * T + (3 * a0 - 2 * at) * T2) / (2 * T4);
     c = (20 * (pt - p0) - (8 * v1 + 12 * v0) * T - (3 * a0 - at) * T2) / (2 * T3);
+
+    this->t0 = t0;
+    this->t1 = t1;
 }
 double QuinticParam::get_pos(const double t) {
     if (t <= t0)
@@ -67,10 +70,11 @@ bool ContinuousTrajectory::get_target(const rclcpp::Time& time, trajectory_msgs:
     auto dt      = time - start_time;
     while (dt >= trajectory.points[cur_index].time_from_start) {
         cur_index++;
-        if(cur_index==trajectory.points.size())
+        if (cur_index == trajectory.points.size())
             break;
-        double t0 = trajectory.points[cur_index].time_from_start.nanosec * 1e-9 + trajectory.points[cur_index].time_from_start.sec;
-        double t1 = trajectory.points[cur_index - 1].time_from_start.nanosec * 1e-9 + trajectory.points[cur_index - 1].time_from_start.sec;
+        double t0 = trajectory.points[cur_index - 1].time_from_start.sec + trajectory.points[cur_index - 1].time_from_start.nanosec * 1e-9;
+
+        double t1 = trajectory.points[cur_index].time_from_start.sec + trajectory.points[cur_index].time_from_start.nanosec * 1e-9;
         for (int i = 0; i < 6; i++) {
             auto& P0 = trajectory.points[cur_index - 1];
             auto& PT = trajectory.points[cur_index];
