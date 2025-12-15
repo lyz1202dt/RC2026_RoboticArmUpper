@@ -124,6 +124,7 @@ rclcpp_action::CancelResponse
     (void)goal_handle;
     cancle_current_task = true;
     is_running_arm_task = false;
+    remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame()); //删除之前添加的碰撞体
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
@@ -214,9 +215,10 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
-            move_group_interface->setGoalJointTolerance(0.13);
-            move_group_interface->setGoalPositionTolerance(0.06);
-            move_group_interface->setGoalOrientationTolerance(0.2);
+            // move_group_interface->setGoalJointTolerance(0.13);
+            // move_group_interface->setGoalPositionTolerance(0.06);
+            // move_group_interface->setGoalOrientationTolerance(0.2);
+            move_group_interface->setPlanningTime(5.0);
             first_run = false;
         }
 
@@ -249,6 +251,10 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
             }
         } else if (current_task_type == ROBOTIC_ARM_TASK_CATCH_TARGET) { // 将地上的KFS吸起来放到车上（或者只是吸起来）
+
+            auto temp_target=task_target_pos;
+            temp_target.position.x=temp_target.position.x+0.1+0.2;
+            add_kfs_collision(temp_target, "target_kfs", move_group_interface->getPlanningFrame()); // 为目标KFS添加碰撞体
             auto prepare_pos = calculate_prepare_pos(task_target_pos);   // 规划路径到目标位置前
             move_group_interface->setPoseTarget(prepare_pos);            // 设置目标
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
@@ -256,12 +262,15 @@ void ArmHandleNode::arm_catch_task_handle() {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达";
                 current_goal_handle->abort(finished_msg);
+                remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
                 continue;
             }
             move_group_interface->execute(plan);
             feedback_msg->current_state  = 1;
             feedback_msg->state_describe = "机械臂移动到待抓取位置";
             current_goal_handle->publish_feedback(feedback_msg);
+
+            remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
 
             // auto start_pose = move_group_interface->getCurrentPose().pose;
             std::vector<geometry_msgs::msg::Pose> way_points;
