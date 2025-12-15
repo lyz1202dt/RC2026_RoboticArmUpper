@@ -141,8 +141,8 @@ public:
     ActionClientNode()
         : Node("action_client_node"),
           cap_(640, 480, 60),
-          inf_("src/best.onnx", cv::Size(640, 640),
-               "src/classes.txt", true)
+          inf_("/home/pc/RC2026_RoboticArmUpper/src/arm_client_pkg/src/best.onnx", cv::Size(640, 640),
+               "/home/pc/RC2026_RoboticArmUpper/src/arm_client_pkg/src/classes.txt", false)
     {
         RCLCPP_INFO(this->get_logger(), "Action Client 启动，准备连接 Action Server...");
 
@@ -172,7 +172,6 @@ private:
 
         cv::Mat colorFrame, depthFrame;
         if (!cap_.read(colorFrame, depthFrame))
-#include <moveit/utils/moveit_error_code.hpp>
         {
             RCLCPP_ERROR(this->get_logger(), "相机读取失败，无法发送目标");
             return;
@@ -192,16 +191,16 @@ private:
         q.setRPY(pose.roll * CV_PI / 180.0, pose.pitch * CV_PI / 180.0, pose.yaw * CV_PI / 180.0);
 
         auto goal_msg = Catch::Goal();
-        goal_msg.target_pose.position.x = pose.x;
+        goal_msg.target_pose.position.x = pose.x + 0.1;
         goal_msg.target_pose.position.y = pose.y;
-        goal_msg.target_pose.position.z = pose.z;
+        goal_msg.target_pose.position.z = pose.z-0.1;
 
         goal_msg.target_pose.orientation.w = q.getW();
         goal_msg.target_pose.orientation.x = q.getX();
         goal_msg.target_pose.orientation.y = q.getY();
         goal_msg.target_pose.orientation.z = q.getZ();
 
-        goal_msg.action_type = 3;
+        goal_msg.action_type = 2;
 
         auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
         send_goal_options.goal_response_callback =
