@@ -112,6 +112,13 @@ rclcpp_action::GoalResponse
     task_target_pos.orientation.x = 0.708322;
     task_target_pos.orientation.y = -0.004257;
     task_target_pos.orientation.z = -0.705862;
+    auto qin=task_target_pos.orientation;
+    tf2::Quaternion q(qin.x, qin.y, qin.z, qin.w);
+    q.normalize();
+    task_target_pos.orientation.w = q.w();
+    task_target_pos.orientation.x = q.x();
+    task_target_pos.orientation.y = q.y();
+    task_target_pos.orientation.z = q.z();
 
 
     current_task_type = goal->action_type;
@@ -191,6 +198,8 @@ void ArmHandleNode::arm_catch_task_handle() {
         collision_object.operation = collision_object.ADD;
         psi->applyCollisionObject(collision_object);                                     // 应用障碍物
     }
+
+    RCLCPP_INFO(node->get_logger(), "机械臂任务处理线程启动完成，等待任务请求");
 
     while (rclcpp::ok()) {
         continue_flag = false;
@@ -272,7 +281,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
 
-            // auto start_pose = move_group_interface->getCurrentPose().pose;
+            auto start_pose = move_group_interface->getCurrentPose().pose;
             std::vector<geometry_msgs::msg::Pose> way_points;
             way_points.resize(2);
             way_points[0]   = task_target_pos; // 当前位姿
@@ -280,7 +289,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             temp.position.x = temp.position.x + 0.1;
             way_points[1]   = temp;            // 最终抓取位姿
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
-            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
             if (fraction < 0.995f)             // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;

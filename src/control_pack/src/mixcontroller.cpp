@@ -126,6 +126,10 @@ controller_interface::CallbackReturn MixController::on_init() {
     output_state.velocities.resize(dof);
     output_state.accelerations.resize(dof);
 
+    feedback_msg->actual.positions.resize(joint_names_.size());
+    feedback_msg->actual.velocities.resize(joint_names_.size());
+    feedback_msg->actual.effort.resize(joint_names_.size());
+
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -197,9 +201,7 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
     feedback_msg->desired.positions  = output_state.positions;
     feedback_msg->desired.velocities = output_state.velocities;
 
-    feedback_msg->actual.positions.resize(joint_names_.size());
-    feedback_msg->actual.velocities.resize(joint_names_.size());
-    feedback_msg->actual.effort.resize(joint_names_.size());
+    
 
     for (size_t i = 0; i < joint_names_.size(); ++i) {
         feedback_msg->actual.positions[i]  = state_interfaces_[i * 2 + 0].get_value();
