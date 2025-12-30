@@ -6,7 +6,7 @@
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
 #include <memory>
-#include <moveit/utils/moveit_error_code.hpp>
+#include <moveit/utils/moveit_error_code.h>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <string>

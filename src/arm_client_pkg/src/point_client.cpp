@@ -172,7 +172,6 @@ private:
 
         cv::Mat colorFrame, depthFrame;
         if (!cap_.read(colorFrame, depthFrame))
-#include <moveit/utils/moveit_error_code.hpp>
         {
             RCLCPP_ERROR(this->get_logger(), "相机读取失败，无法发送目标");
             return;
