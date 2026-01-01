@@ -53,7 +53,7 @@ private:
 
     std::mutex task_mutex_;             //用于线程同步
     std::condition_variable task_cv_;
-    bool has_new_task_{false};
+    bool has_new_task_{false}; // 是否开始新线程
 
     rclcpp::SyncParametersClient::SharedPtr param_client;
     std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> current_goal_handle;
@@ -64,7 +64,7 @@ private:
     std::atomic<bool> cancle_current_task{false};
     std::atomic<int> current_task_type{0};
     std::atomic<int> current_kfs_num{0};
-    std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
+    std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer; // 坐标变换
     std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
     geometry_msgs::msg::TransformStamped camera_link0_tf;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;

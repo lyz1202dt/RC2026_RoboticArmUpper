@@ -24,8 +24,11 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
     arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(
         node, "robotic_task",                                                                                  // 创建动作服务-服务端
         std::bind(&ArmHandleNode::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
-        std::bind(&ArmHandleNode::cancel_goal, this, std::placeholders::_1), std::bind(&ArmHandleNode::handle_accepted, this, std::placeholders::_1)
+        std::bind(&ArmHandleNode::cancel_goal, this, std::placeholders::_1), 
+        std::bind(&ArmHandleNode::handle_accepted, this, std::placeholders::_1)
     );
+
+    // 坐标变换监听
     camera_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
@@ -43,13 +46,22 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
         marker.ns = "kfs_pos";
         marker.id = 0;
 
-        marker.type   = visualization_msgs::msg::Marker::SPHERE;
-        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.type   = visualization_msgs::msg::Marker::SPHERE; // 显示球体标记
+        marker.action = visualization_msgs::msg::Marker::ADD; // 第一次发布：添加标记
+
+        /*****************************************************************************
+         *  marker.action = visualization_msgs::msg::Marker::DELETE;
+         *  marker.id = 0;  // 指定要删除的标记 ID
+         *  mark_pub_->publish(marker);
+         *
+         *  marker.action = visualization_msgs::msg::Marker::DELETEALL;
+         *  mark_pub_->publish(marker);
+        */
 
         // 球心位置
         marker.pose = task_target_pos;
 
-        // 姿态（球体无关，但必须合法）
+        // 姿态（球体无关，但必须合法）球体看不出旋转效果，但需符合归一化要求
         marker.pose.orientation.w = 1.0;
 
         // 尺寸（直径，单位 m）
@@ -77,14 +89,16 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) {
 }
 
 
-ArmHandleNode::~ArmHandleNode() {
-    task_mutex_.lock();
-    has_new_task_ = true;    // 置为 true，让线程退出循环时能通过条件判断
-    task_mutex_.unlock();
-    task_cv_.notify_all();
 
-    if (arm_task_thread->joinable())
-        arm_task_thread->join();
+
+ArmHandleNode::~ArmHandleNode() {
+    task_mutex_.lock(); // 加锁，保护共享变量，其他线程暂时不能访问has_new_task_
+    has_new_task_ = true;    // 置为 true，让线程退出循环时能通过条件判断。有新任务
+    task_mutex_.unlock(); // 解锁
+    task_cv_.notify_all(); // 唤醒等待条件变量的线程
+
+    if (arm_task_thread->joinable()) // 检测线程是否还在运行
+        arm_task_thread->join(); // 等待线程结束
 }
 
 rclcpp_action::GoalResponse
