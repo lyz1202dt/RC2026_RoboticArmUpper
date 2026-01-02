@@ -60,9 +60,9 @@ private:
     moveit::core::RobotModelConstPtr robot_module;
     std::unique_ptr<std::thread> arm_task_thread;    //执行期望，解析plan并发布节点的线程
     geometry_msgs::msg::Pose task_target_pos;
-    std::atomic<bool> is_running_arm_task{false};
+    std::atomic<bool> is_running_arm_task{false}; // 
     std::atomic<bool> cancle_current_task{false};
-    std::atomic<int> current_task_type{0};
+    std::atomic<int> current_task_type{0}; // 任务类型
     std::atomic<int> current_kfs_num{0};
     std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer; // 坐标变换
     std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
@@ -87,7 +87,7 @@ private:
     //机械臂动作处理
     void arm_catch_task_handle();
     //bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
-    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos);
+    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance );
     bool add_attached_kfs_collision();
     bool remove_attached_kfs_collision();
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);

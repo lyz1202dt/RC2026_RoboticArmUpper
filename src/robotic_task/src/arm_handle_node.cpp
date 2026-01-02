@@ -6,6 +6,7 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
+#include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <memory>
 #include <moveit/utils/moveit_error_code.h>
 #include <rclcpp/logging.hpp>
@@ -109,13 +110,14 @@ rclcpp_action::GoalResponse
 
     try {
         camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
-    } catch (const tf2::TransformException& ex) {
+    } catch (const tf2::TransformException& ex) { 
         RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
         return rclcpp_action::GoalResponse::REJECT;
     }
 
     // Transform the pose manually
     // geometry_msgs::msg::Pose transformed_pose;
+    // 将相机识别的物体位置转换到主坐标系下
     tf2::doTransform(goal->target_pose, task_target_pos, camera_link0_tf);
 
     // task_target_pos   = goal->target_pose;
@@ -126,6 +128,8 @@ rclcpp_action::GoalResponse
     task_target_pos.orientation.x = 0.708322;
     task_target_pos.orientation.y = -0.004257;
     task_target_pos.orientation.z = -0.705862;
+
+    // 四元数归一化处理
     auto qin=task_target_pos.orientation;
     tf2::Quaternion q(qin.x, qin.y, qin.z, qin.w);
     q.normalize();
@@ -135,7 +139,7 @@ rclcpp_action::GoalResponse
     task_target_pos.orientation.z = q.z();
 
 
-    current_task_type = goal->action_type;
+    current_task_type = goal->action_type; // 任务类型
 
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -145,13 +149,18 @@ rclcpp_action::CancelResponse
     (void)goal_handle;
     cancle_current_task = true;
     is_running_arm_task = false;
-    remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame()); //删除之前添加的碰撞体
+
+    // 删除之前添加的碰撞体，避免残留的虚拟碰撞体影响后续任务规划。
+    remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame()); 
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
 void ArmHandleNode::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> goal_handle) {
     current_goal_handle = goal_handle;
+    // 设置取消标志，通知执行循环终止当前任务
     is_running_arm_task = true;
+
+    // 更新任务状态，表示机械臂任务已停止
     cancle_current_task = false;
 
     task_mutex_.lock(); // 通知需要执行任务
@@ -162,6 +171,9 @@ void ArmHandleNode::handle_accepted(const std::shared_ptr<rclcpp_action::ServerG
 }
 
 // 机械臂
+/*
+实现了完整的机械臂抓取-放置任务流程，包括运动规划、轨迹执行、碰撞检测管理和任务状态反馈。
+*/
 void ArmHandleNode::arm_catch_task_handle() {
     RCLCPP_INFO(node->get_logger(), "进入机械臂任务处理线程");
     bool first_run = true;
@@ -220,11 +232,14 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         is_running_arm_task = false;
         std::unique_lock<std::mutex> lock(task_mutex_);
-        bool ok       = task_cv_.wait_for(lock, 5s, [this]() { return has_new_task_; }); // 等待直到lambda表达式返回真
+
+        // 等待直到lambda表达式返回真
+        bool ok       = task_cv_.wait_for(lock, 5s, [this]() { return has_new_task_; }); 
         has_new_task_ = false;
         lock.unlock();
 
         if (!ok) {
+            // 超时：打印当前位姿并继续等待
             auto pos = move_group_interface->getCurrentPose();
             RCLCPP_INFO(
                 node->get_logger(), "当前机械臂位姿:Pos(%lf,%lf,%lf),Rot(%lf,%lf,%lf,%lf)", pos.pose.position.x, pos.pose.position.y,
@@ -275,48 +290,84 @@ void ArmHandleNode::arm_catch_task_handle() {
             }
         } else if (current_task_type == ROBOTIC_ARM_TASK_CATCH_TARGET) { // 将地上的KFS吸起来放到车上（或者只是吸起来）
 
+            // 步骤一：添加目标KFS碰撞体
             auto temp_target=task_target_pos;
             temp_target.position.x=temp_target.position.x+0.1+0.2;
-            add_kfs_collision(temp_target, "target_kfs", move_group_interface->getPlanningFrame()); // 为目标KFS添加碰撞体
-            auto prepare_pos = calculate_prepare_pos(task_target_pos);   // 规划路径到目标位置前
+                // 为目标KFS添加碰撞体
+            add_kfs_collision(temp_target, "target_kfs", move_group_interface->getPlanningFrame()); 
+
+            // 步骤二：计算准备位置并规划移动
+                // 规划路径到目标位置前,调用 calculate_prepare_pos 函数计算目标位置前方的准备位置
+            auto prepare_pos = calculate_prepare_pos(task_target_pos, 0.1);  
+                // 然后将这个准备位置设置为规划目标
             move_group_interface->setPoseTarget(prepare_pos);            // 设置目标
+                // plan 函数进行运动规划
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
+
+            // 步骤三：规划失败处理
             if (!success) {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达";
+                // 调用 abort 方法终止当前 Action 目标
                 current_goal_handle->abort(finished_msg);
-                remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
+                // 在抓取前删除KFS防止因碰撞检测无法连接
+                remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   
                 continue;
             }
+
+            // 步骤四：执行到准备位置
+                // 调用 execute 函数执行规划好的轨迹
             move_group_interface->execute(plan);
+                // 更新反馈消息的状态编号为 1
             feedback_msg->current_state  = 1;
             feedback_msg->state_describe = "机械臂移动到待抓取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
+            // 步骤五：删除碰撞体进行抓取
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
 
+            // 步骤六：设置笛卡尔路径点
             auto start_pose = move_group_interface->getCurrentPose().pose;
+                // 创建包含两个位姿的路点数组 way_points
             std::vector<geometry_msgs::msg::Pose> way_points;
             way_points.resize(2);
             way_points[0]   = task_target_pos; // 当前位姿
             auto temp       = way_points[0];
             temp.position.x = temp.position.x + 0.1;
             way_points[1]   = temp;            // 最终抓取位姿
+
+            // 步骤七：笛卡尔路径规划
+                // RobotTrajectory 消息用于存储计算出的笛卡尔路径
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
+                // 调用 computeCartesianPath 函数进行笛卡尔路径规划，该函数会计算从当前位姿沿着直线移动到目标路点的轨迹
+                /*
+                参数说明：第一个参数是路点数组，第二个参数 0.01 是路点之间的最大距离（单位：米），
+                第三个参数 0.0 是跳转阈值，第四个参数存储计算出的轨迹，
+                第五个参数 false 表示不使用参考框架。函数返回规划成功的比例（0.0 到 1.0），1.0 表示完全成功。
+                */
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
+            
+            // 步骤八：笛卡尔规划失败处理
             if (fraction < 0.995f)             // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
                 finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
+                // 调用 abort 终止目标
                 current_goal_handle->abort(finished_msg);
                 continue;
             }
+
+            // 步骤九：执行笛卡尔路径并发布反馈
             move_group_interface->execute(cart_trajectory);
             feedback_msg->current_state  = 2;
             feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
+            // 步骤十：等待气泵稳定
+                // 调用 sleep_for 让线程休眠 2 秒
             std::this_thread::sleep_for(2s);
+
+
             // 使用一个参数服务来启动气泵
             // std::vector<std::string> node_names = node->get_node_names();
             // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
@@ -326,12 +377,16 @@ void ArmHandleNode::arm_catch_task_handle() {
             //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
             // }
 
+            // 步骤十一：发布吸附启动反馈
             feedback_msg->current_state  = 3;
             feedback_msg->state_describe = "启动气泵吸取KFS";
             current_goal_handle->publish_feedback(feedback_msg);
-            // 为机械臂末端连接一个KFS用于碰撞计算
+
+            // 步骤十二：添加附着碰撞体
+                // 调用 add_attached_kfs_collision 函数将已吸附的 KFS 添加为机械臂末端的附着碰撞体
             add_attached_kfs_collision();
 
+            // 步骤十三：根据KFS数量选择目标位置
             if (current_kfs_num == 0)                                   // 根据当前机器人上的情况设置目标
                 move_group_interface->setNamedTarget("kfs1_touch_pos"); // 设置目标
             else if (current_kfs_num == 1)
@@ -339,8 +394,9 @@ void ArmHandleNode::arm_catch_task_handle() {
             else
                 move_group_interface->setNamedTarget("kfs3_hold_pos");
 
-
+            // 步骤十四：规划并执行到放置位置
             do {
+                // 调用 setStartStateToCurrentState 将规划起点设置为机械臂当前位置
                 move_group_interface->setStartStateToCurrentState();
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 if (!success) {
@@ -353,12 +409,17 @@ void ArmHandleNode::arm_catch_task_handle() {
                     break;
                 }
             } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS); // 如果执行失败那么尝试重新规划并执行
+            
+            // 步骤十五：继续后续操作
             if (continue_flag)
                 continue;
 
+            // 步骤十六：发布到达放置位置反馈
             feedback_msg->current_state  = 4;
             feedback_msg->state_describe = "机械臂到达放置KFS的位置";
             current_goal_handle->publish_feedback(feedback_msg);
+
+            // 步骤十七：检查是否需要手持KFS
             if (current_kfs_num
                 == 2) // 如果当前机器人上有3个KFS，那么最后一个KFS只能用手拿着，因此在这里就判定成功然后退出，否则继续执行后面的关闭气泵，退出机械臂等操作
             {
@@ -378,6 +439,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
             // }
 
+            // 步骤十八：删除附着碰撞体
             remove_attached_kfs_collision(); // 将KFS从吸盘上移除(（防止机械臂回退时在一开始就碰到KFS导致规划失败）
 
 
@@ -386,6 +448,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             // else
             //     add_kfs_collision(kfs2_pos, "kfs2", move_group_interface->getPlanningFrame());
 
+            // 步骤十九：返回空闲位置
             do {
                 move_group_interface->setStartStateToCurrentState();
                 move_group_interface->setNamedTarget("idel_pos");
@@ -401,14 +464,17 @@ void ArmHandleNode::arm_catch_task_handle() {
             if (continue_flag)
                 continue;
 
+            // 步骤二十：发布到达空闲位置反馈
             feedback_msg->current_state  = 5;
             feedback_msg->state_describe = "机械臂到达空闲位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
+            // 步骤二十一：任务完成
             current_kfs_num       = current_kfs_num + 1;
             finished_msg->kfs_num = current_kfs_num;
             finished_msg->reason  = "成功抓取KFS并放置到机器人上";
             current_goal_handle->succeed(finished_msg);
+
         } else if (current_task_type == ROBOTIC_ARM_TASK_PLACE_TARGET) { // 将车上的KFS吸起来，然后放到某个坐标
             if (current_kfs_num == 0)                                    // 如果当前机器人上没有KFS，报告后等待下一个请求
             {
@@ -596,13 +662,38 @@ void ArmHandleNode::arm_catch_task_handle() {
 //     return true;
 // }
 
-geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(const geometry_msgs::msg::Pose& box_pos) {
+geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(const geometry_msgs::msg::Pose& box_pos, double approach_distance = 0.1) {
+    // 1. 提取物体位置
     Eigen::Vector3d pos(box_pos.position.x, box_pos.position.y, box_pos.position.z);
+
+    // 2. 构造四元数（注意：这里变量名q应该是四元数，不是平移矩阵）
     Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, box_pos.orientation.y,
                          box_pos.orientation.z);            // 构造物体的位置和平移矩阵
+
+    // 3. 计算旋转矩阵
     Eigen::Matrix3d R = q.toRotationMatrix();
+
+    // 4. 计算被吸取面的法向量（假设物体上表面法向量为(0,0,1)）
     Eigen::Vector3d n = R * Eigen::Vector3d(0.0, 0.0, 1.0); // 计算在车体坐标系下，被吸取面的法向量
-    return box_pos;
+
+    /************************
+    * 计算上表面中心（沿法向量偏移KFS高度一半）
+    */
+    double kfs_height = 0.5;
+    Eigen::Vector3d top_center = pos + (kfs_height / 2.0) * n;
+
+    // 5.计算准备位置：沿法向量反方向偏移一定距离
+    Eigen::Vector3d prepare_pos = pos - approach_distance * n;
+
+    // 6.构造返回的Pose
+    geometry_msgs::msg::Pose result;
+    result.position.x = prepare_pos.x();
+    result.position.y = prepare_pos.y();
+    result.position.z = prepare_pos.z();
+    result.orientation = box_pos.orientation; // 姿态保持不变
+
+
+    return result;
 }
 
 /**
