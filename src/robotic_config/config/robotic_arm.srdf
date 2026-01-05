@@ -66,7 +66,16 @@
         <joint name="joint5" value="0"/>
         <joint name="joint6" value="0"/>
     </group_state>
+    <group_state name="kfs4_interim_1_pos" group="robotic_arm">
+        <joint name="joint1" value="0.628318531"/>
+        <joint name="joint2" value="0.000000000"/>
+        <joint name="joint3" value="2.426007660"/>
+        <joint name="joint4" value="-0.837758041"/>
+        <joint name="joint5" value="-0.698131701"/>
+        <joint name="joint6" value="3.071779204"/>
+    </group_state>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
+    <!-- 碰撞排除定义 -->
     <disable_collisions link1="link1" link2="link2" reason="User"/>
     <disable_collisions link1="link2" link2="link3" reason="User"/>
     <disable_collisions link1="link5" link2="link6" reason="User"/>

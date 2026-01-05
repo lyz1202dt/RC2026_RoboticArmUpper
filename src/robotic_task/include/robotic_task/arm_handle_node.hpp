@@ -27,6 +27,7 @@
 #include <atomic>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <vector>
 
 typedef enum{
     ROBOTIC_ARM_TASK_MOVE=1,           //移动到某个位姿
@@ -57,6 +58,7 @@ public:
 
     
 private:
+    bool success; // 规划或执行是否成功
     rclcpp::Node::SharedPtr node;
     rclcpp_action::Server<robot_interfaces::action::Catch>::SharedPtr arm_handle_server;  //机械臂任务接口
 
@@ -97,7 +99,13 @@ private:
     void arm_catch_task_handle();
     //bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
     // 计算从上方接近物体的准备位姿，返回准备位姿并通过 grasp_pose 输出最终抓取位姿（贴合上表面）
-    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose);
+    enum class ApproachMode {
+        AUTO = 0,      // 自动选择（根据与基座距离决定是否侧面抓取）
+        TOP,           // 从上方抓取
+        SIDE_ROBOT     // 从靠近机器人的侧面抓取
+    };
+
+    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose, ApproachMode mode = ApproachMode::AUTO);
     bool add_attached_kfs_collision();
     bool remove_attached_kfs_collision();
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
@@ -107,7 +115,7 @@ private:
     // 关节空间 
     //  */
     // 规划参数配置
-    const double SWITCH_DISTANCE_THRESHOLD = 0.15;  // 切换距离阈值（米）
+    const double SWITCH_DISTANCE_THRESHOLD = 0.01;  // 切换距离阈值（米）
     const double CARTESIAN_GOAL_TOLERANCE = 0.001;   // 笛卡尔空间目标容差
     const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差
     const double VELOCITY_SCALING = 0.5;             // 速度缩放因子

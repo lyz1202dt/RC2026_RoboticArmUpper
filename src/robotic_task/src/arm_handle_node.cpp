@@ -1,19 +1,26 @@
 #include "arm_handle_node.hpp"
+#include "GraspOrientionController.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "moveit_msgs/msg/attached_collision_object.hpp"
 #include "shape_msgs/msg/solid_primitive.hpp"
 #include "visualization_msgs/msg/marker.hpp"
+#include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <memory>
 #include <moveit/utils/moveit_error_code.h>
+#include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
+// #include <qt5/QtGui/qvalidator.h>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <string>
+#include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2_ros/transform_listener.hpp>
 #include <thread>
+#include <iostream>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -137,8 +144,11 @@ rclcpp_action::GoalResponse
     // 将相机识别的物体位置转换到主坐标系下
     // 将相机识别的物体位置转换到主坐标系下，保存到 task_target_pos（不要覆盖为 camera_frame 的原始 pose）
     tf2::doTransform(goal->target_pose, task_target_pos, camera_link0_tf);
+    RCLCPP_INFO(node->get_logger(), "原始目标位姿: Pos(%lf,%lf,%lf), Rot(%lf,%lf,%lf,%lf)",
+    goal->target_pose.position.x, goal->target_pose.position.y, goal->target_pose.position.z,
+    goal->target_pose.orientation.w, goal->target_pose.orientation.x, 
+    goal->target_pose.orientation.y, goal->target_pose.orientation.z);
 
-    
     // TODO:姿态一定是大约朝前的，所以这里定死姿态
     // RCLCPP_INFO(node->get_logger(),"实际位置为(%lf,%lf,%lf)",task_target_pos.position.x,task_target_pos.position.y,task_target_pos.position.z);
 
@@ -273,12 +283,17 @@ void ArmHandleNode::arm_catch_task_handle() {
 
         if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
-            // move_group_interface->setGoalJointTolerance(0.13);
-            // move_group_interface->setGoalPositionTolerance(0.06);
-            // move_group_interface->setGoalOrientationTolerance(0.2);
+            // 容差
+            move_group_interface->setGoalJointTolerance(0.13);
+            move_group_interface->setGoalPositionTolerance(0.06);
+            move_group_interface->setGoalOrientationTolerance(0.2);
 
             // 调用 setPlanningTime 方法设置规划器的最大规划时间为 5.0 秒
             move_group_interface->setPlanningTime(5.0);
+
+            // 设置采样次数（最多尝试次数）
+            move_group_interface->setNumPlanningAttempts(10);
+
             first_run = false;
         }
 
@@ -318,23 +333,77 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // 步骤一：添加目标KFS碰撞体
             auto temp_target=task_target_pos;
-            ;
+            RCLCPP_INFO(node->get_logger(), "转换后目标位姿: Pos(%lf,%lf,%lf), Rot(%lf,%lf,%lf,%lf)",
+            task_target_pos.position.x, task_target_pos.position.y, task_target_pos.position.z,
+            task_target_pos.orientation.w, task_target_pos.orientation.x, 
+            task_target_pos.orientation.y, task_target_pos.orientation.z);
+            
                 // 为目标KFS添加碰撞体
             add_kfs_collision(temp_target, "target_kfs", move_group_interface->getPlanningFrame()); 
+
+            auto current_pose = move_group_interface->getCurrentPose();
+
 
             // 步骤二：计算准备位置并规划移动
                 // 规划路径到目标位置前,调用 calculate_prepare_pos 函数计算目标位置前方的准备位置
             geometry_msgs::msg::Pose grasp_pose;
             auto prepare_pos = calculate_prepare_pos(task_target_pos, 0.1, grasp_pose);  
+            RCLCPP_INFO(node->get_logger(), "计算得到的准备位置: Pos(%lf,%lf,%lf), ORI(w:%f,x:%f,y:%f,z:%f)",
+                prepare_pos.position.x, prepare_pos.position.y, prepare_pos.position.z,
+                prepare_pos.orientation.w, prepare_pos.orientation.x, prepare_pos.orientation.y, prepare_pos.orientation.z);
+
+
+            
+
+               // 设置过渡位置
+            do{
+                move_group_interface->setStartStateToCurrentState();    
+                move_group_interface->setNamedTarget("kfs4_interim_1_pos");
+                
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                if(success){
+                    RCLCPP_INFO(node->get_logger(), "规划到过渡位置成功");
+                } else {
+                    finished_msg->reason = "机械臂无法到达过渡位置，路径规划失败";
+                    // abort  → 终止当前目标，状态设为"失败",并返回finished_msg
+                    current_goal_handle->abort(finished_msg);
+                    RCLCPP_WARN(node->get_logger(), "过渡位置规划失败，尝试直接规划到目标");
+                    // 如果过渡位置也失败，尝试直接规划（可能原来能走的路径被阻挡）
+                }
+            } while(move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
+            auto intermediate_pose = move_group_interface->getCurrentPose().pose;
+                    RCLCPP_INFO(node->get_logger(), "执行到过渡位置: Pos(%.3f,%.3f,%.3f)",
+                        intermediate_pose.position.x, intermediate_pose.position.y, intermediate_pose.position.z);
+            if(continue_flag)
+                continue;
+
+                // ==================== 尝试在规划准备位置之前删除 kfs 的碰撞 ===========================
+            remove_kfs_collision("target_kfs", move_group_interface->getPlannerId());
+
+            //     // ==================== 对规划位置的逆运动学检查 =========================
+            // move_group_interface->setPoseTarget(grasp_pose);
+            // success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            // if(success){
+            //     RCLCPP_INFO(node->get_logger(), "抓取位置可达");
+            // } else {
+            //     RCLCPP_INFO(node->get_logger(), "抓取位置不可打");
+            // }
+            
+
                 // 然后将这个准备位置设置为规划目标
             move_group_interface->setPoseTarget(prepare_pos);            // 设置目标
                 // plan 函数进行运动规划
-            bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
+            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
+            if(success){
+                RCLCPP_INFO(node->get_logger(), "准备位置规划成功");
+            } else {
+                RCLCPP_WARN(node->get_logger(), "准备位置规划失败");
+            }
 
             // 步骤三：规划失败处理
             if (!success) {
                 finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达";
+                finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达(ROBOTIC_ARM_TASK_CATCH_TARGET)";
                 // 调用 abort 方法终止当前 Action 目标
                 current_goal_handle->abort(finished_msg);
                 // 在抓取前删除KFS防止因碰撞检测无法连接
@@ -345,20 +414,22 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 步骤四：执行到准备位置
                 // 调用 execute 函数执行规划好的轨迹
             move_group_interface->execute(plan);
+            RCLCPP_INFO(node->get_logger(), "执行到准备位置");
                 // 更新反馈消息的状态编号为 1
             feedback_msg->current_state  = 1;
             feedback_msg->state_describe = "机械臂移动到待抓取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
             // 步骤五：删除碰撞体进行抓取
+                // getPlanningFrame 获取运动规划器的id
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
 
             // 步骤六：设置笛卡尔路径点（从准备位姿沿表面法向量直线接近）
                 // 创建包含准备位姿和抓取位姿的路点数组 way_points
             std::vector<geometry_msgs::msg::Pose> way_points;
             way_points.resize(2);
-            way_points[0] = prepare_pos; // 准备位姿（在表面外侧）
-            way_points[1] = grasp_pose;  // 抓取位姿（贴合表面）
+            way_points[0] = prepare_pos; // 准备位姿（在表面外侧）grasp_pose
+            way_points[1] = grasp_pose;  // 抓取位姿（贴合表面）prepare_pos
 
             // 步骤七：笛卡尔路径规划
                 // RobotTrajectory 消息用于存储计算出的笛卡尔路径
@@ -369,8 +440,12 @@ void ArmHandleNode::arm_catch_task_handle() {
                 第三个参数 0.0 是跳转阈值，第四个参数存储计算出的轨迹，
                 第五个参数 false 表示不使用参考框架。函数返回规划成功的比例（0.0 到 1.0），1.0 表示完全成功。
                 */
+                
+                // 调整速度因子以达到减慢速度的目的
+            move_group_interface->setMaxVelocityScalingFactor(0.00001);
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
-            
+            move_group_interface->setMaxVelocityScalingFactor(1);
+
             // 步骤八：笛卡尔规划失败处理
             if (fraction < 0.995f)             // 如果轨迹生成失败
             {
@@ -378,11 +453,13 @@ void ArmHandleNode::arm_catch_task_handle() {
                 finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
                 // 调用 abort 终止目标
                 current_goal_handle->abort(finished_msg);
+                RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
                 continue;
             }
 
             // 步骤九：执行笛卡尔路径并发布反馈
             move_group_interface->execute(cart_trajectory);
+            RCLCPP_INFO(node->get_logger(), "执行从准备位置到抓取位置的笛卡尔路径");
             feedback_msg->current_state  = 2;
             feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
@@ -474,6 +551,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // 步骤十九：返回空闲位置
             do {
+                // setStartStateToCurrentState 将规划的起始状态设置为当前实时状态
                 move_group_interface->setStartStateToCurrentState();
                 move_group_interface->setNamedTarget("idel_pos");
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
@@ -722,77 +800,173 @@ void ArmHandleNode::arm_catch_task_handle() {
 //     return true;
 // }
 
-geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(const geometry_msgs::msg::Pose& box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose) {
-    // 1. 提取物体位置（体中心）
-    Eigen::Vector3d pos(box_pos.position.x, box_pos.position.y, box_pos.position.z);
+geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
+    const geometry_msgs::msg::Pose& box_pos, 
+    double approach_distance, 
+    geometry_msgs::msg::Pose &grasp_pose, 
+    ApproachMode mode) 
+{
+    RCLCPP_INFO(node->get_logger(), 
+        "传入的box_pos: POS(%f, %f, %f), ORI(w:%f, x:%f, y:%f, z:%f)", 
+        box_pos.position.x, box_pos.position.y, box_pos.position.z,
+        box_pos.orientation.w, box_pos.orientation.x, 
+        box_pos.orientation.y, box_pos.orientation.z);
 
-    // 2. 构造四元数（注意：这里变量名q应该是四元数，不是平移矩阵）
-    Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, box_pos.orientation.y,
-                         box_pos.orientation.z);            // 构造物体的位置和平移矩阵
-
-    // 3. 计算旋转矩阵
+    // ========== 步骤1：提取物体位置和方向 ==========
+    Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
+    Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, 
+                         box_pos.orientation.y, box_pos.orientation.z);
     Eigen::Matrix3d R = q.toRotationMatrix();
 
-    // 4. 计算被吸取面的法向量（假设物体上表面法向量为(0,0,1)）
-    Eigen::Vector3d n = R * Eigen::Vector3d(0.0, 0.0, 1.0); // 计算在车体坐标系下，被吸取面的法向量
-
-    /************************
-    * 计算上表面中心（沿法向量偏移KFS高度一半）
-    */
-    double kfs_height = 0.35;
-    Eigen::Vector3d top_center = pos + (kfs_height / 2.0) * n;
-
-    // 5. 计算抓取位姿（贴合物体上表面中心）
-    Eigen::Vector3d grasp_pos = top_center;
-
-    // 希望吸盘朝向与表面法向量相反（吸盘朝向表面），即末端的局部Z轴应指向 -n
-    Eigen::Vector3d z_axis = -n; // 末端工具的Z轴
-
-    // 选择一个稳定的X轴（尝试与全局x轴对齐，若平行则使用全局y轴）
-    Eigen::Vector3d global_x(1.0, 0.0, 0.0);
-    Eigen::Vector3d x_axis = z_axis.cross(global_x);
-    if (x_axis.norm() < 1e-6) {
-        Eigen::Vector3d global_y(0.0, 1.0, 0.0);
-        x_axis = z_axis.cross(global_y);
+    // ========== 步骤2：根据模式选择抓取策略 ==========
+    int select = 0;
+    bool is_side_mode = false;
+    
+    if (mode == ApproachMode::AUTO) {
+        double horiz_dist = std::hypot(box_pos.position.x, box_pos.position.y);
+        if (horiz_dist < SWITCH_DISTANCE_THRESHOLD) {
+            mode = ApproachMode::TOP;
+            select = 1;
+            is_side_mode = false;
+        } else {
+            mode = ApproachMode::SIDE_ROBOT;
+            select = 2;
+            is_side_mode = true;
+        }
+    } else {
+        is_side_mode = (mode == ApproachMode::SIDE_ROBOT);
     }
-    x_axis.normalize();
+    RCLCPP_INFO(node->get_logger(), "选择的抓取模式: %s (select=%d)", 
+                is_side_mode ? "SIDE_ROBOT" : "TOP", select);
 
-    Eigen::Vector3d y_axis = z_axis.cross(x_axis);
-    y_axis.normalize();
+    // ========== 步骤3：计算接近方向向量 ==========
+    Eigen::Vector3d approach_normal;
+    bool use_side = is_side_mode;
 
-    // 构造旋转矩阵（列为 x, y, z）
-    // 把向量赋值给第n列
+    if (!use_side) {
+        // TOP抓取：使用物体局部Z轴
+        approach_normal = R * Eigen::Vector3d(0.0, 0.0, 1.0);
+        RCLCPP_INFO(node->get_logger(), "TOP抓取: 法向量 = (%f, %f, %f)",
+                    approach_normal.x(), approach_normal.y(), approach_normal.z());
+    } else {
+        // SIDE_ROBOT抓取：水平指向机器人
+        Eigen::Vector3d horizontal_dir(box_pos.position.x, box_pos.position.y, 0.0);
+        if (horizontal_dir.norm() < 1e-6) {
+            RCLCPP_WARN(node->get_logger(), "无法确定侧面方向，回退到上方抓取");
+            approach_normal = R * Eigen::Vector3d(0.0, 0.0, 1.0);
+            use_side = false;
+        } else {
+            horizontal_dir.normalize();
+            approach_normal = horizontal_dir;
+            RCLCPP_INFO(node->get_logger(), "SIDE抓取: 法向量(指向机器人) = (%f, %f, %f)",
+                        approach_normal.x(), approach_normal.y(), approach_normal.z());
+        }
+    }
+
+    // ========== 步骤4：计算物体表面中心 ==========
+    const double object_half_size = 0.35;
+    Eigen::Vector3d surface_center;
+
+    if (!use_side) {
+        surface_center = object_center + object_half_size * approach_normal;
+    } else {
+        surface_center = object_center - object_half_size * approach_normal;
+    }
+    RCLCPP_INFO(node->get_logger(), "表面中心 surface_center = (%f, %f, %f)",
+                surface_center.x(), surface_center.y(), surface_center.z());
+
+    // ========== 步骤5：计算末端执行器姿态（先计算姿态，再计算位置） ==========
+    Eigen::Vector3d eef_z_axis;
+
+    if (!use_side) {
+        // TOP抓取
+        if (object_center.dot(approach_normal) >= 0.0) {
+            eef_z_axis = approach_normal;
+        } else {
+            eef_z_axis = -approach_normal;
+        }
+    } else {
+        // SIDE抓取：Z轴指向物体表面
+        eef_z_axis = -approach_normal;
+    }
+    RCLCPP_INFO(node->get_logger(), "末端Z轴 eef_z_axis = (%f, %f, %f)",
+                eef_z_axis.x(), eef_z_axis.y(), eef_z_axis.z());
+
+    // 【关键修正】X轴使用全局固定方向，保证姿态连续性
+    Eigen::Vector3d global_x(1.0, 0.0, 0.0);
+    Eigen::Vector3d eef_x_axis = eef_z_axis.cross(global_x);
+    
+    if (eef_x_axis.norm() < 1e-6) {
+        Eigen::Vector3d global_y(0.0, 1.0, 0.0);
+        eef_x_axis = eef_z_axis.cross(global_y);
+    }
+    eef_x_axis.normalize();
+    RCLCPP_INFO(node->get_logger(), "末端X轴 eef_x_axis = (%f, %f, %f)",
+                eef_x_axis.x(), eef_x_axis.y(), eef_x_axis.z());
+
+    Eigen::Vector3d eef_y_axis = eef_z_axis.cross(eef_x_axis);
+    eef_y_axis.normalize();
+    RCLCPP_INFO(node->get_logger(), "末端Y轴 eef_y_axis = (%f, %f, %f)",
+                eef_y_axis.x(), eef_y_axis.y(), eef_y_axis.z());
+
+    // ========== 步骤6：构造旋转矩阵和四元数 ==========
     Eigen::Matrix3d R_eef;
-    R_eef.col(0) = x_axis;
-    R_eef.col(1) = y_axis;
-    // normalized() 归一化
-    R_eef.col(2) = z_axis.normalized();
-
+    R_eef.col(0) = eef_x_axis;
+    R_eef.col(1) = eef_y_axis;
+    R_eef.col(2) = eef_z_axis;
     Eigen::Quaterniond q_eef(R_eef);
 
-    // 6. 构造返回的准备位姿（位于上表面外侧，沿法向量方向偏移 approach_distance）
-    Eigen::Vector3d prepare_pos = top_center + approach_distance * n; // 在表面上方
+    // ========== 步骤7：计算位置（使用相同的姿态） ==========
+    const double tool_offset = 0.05;
+    Eigen::Vector3d grasp_position;
+    Eigen::Vector3d prepare_position;
 
+    if (!use_side) {
+        // TOP抓取
+        grasp_position = surface_center - tool_offset * approach_normal;
+        prepare_position = grasp_position - approach_distance * approach_normal;
+    } else {
+        // SIDE抓取
+        grasp_position = surface_center + tool_offset * approach_normal;
+        prepare_position = grasp_position + approach_distance * approach_normal;
+    }
+    RCLCPP_INFO(node->get_logger(), "抓取位置 grasp_position = (%f, %f, %f)",
+                grasp_position.x(), grasp_position.y(), grasp_position.z());
+    RCLCPP_INFO(node->get_logger(), "准备位置 prepare_position = (%f, %f, %f)",
+                prepare_position.x(), prepare_position.y(), prepare_position.z());
+
+    // ========== 步骤8：构造返回的Pose消息 ==========
     geometry_msgs::msg::Pose result;
-    result.position.x = prepare_pos.x();
-    result.position.y = prepare_pos.y();
-    result.position.z = prepare_pos.z();
+    result.position.x = prepare_position.x();
+    result.position.y = prepare_position.y();
+    result.position.z = prepare_position.z();
     result.orientation.w = q_eef.w();
     result.orientation.x = q_eef.x();
     result.orientation.y = q_eef.y();
     result.orientation.z = q_eef.z();
 
-    // 输出抓取位姿（贴合上表面）
-    grasp_pose.position.x = grasp_pos.x();
-    grasp_pose.position.y = grasp_pos.y();
-    grasp_pose.position.z = grasp_pos.z();
+    grasp_pose.position.x = grasp_position.x();
+    grasp_pose.position.y = grasp_position.y();
+    grasp_pose.position.z = grasp_position.z();
     grasp_pose.orientation.w = q_eef.w();
     grasp_pose.orientation.x = q_eef.x();
     grasp_pose.orientation.y = q_eef.y();
     grasp_pose.orientation.z = q_eef.z();
 
+    RCLCPP_INFO(node->get_logger(), "========== 计算结果汇总 ==========");
+    RCLCPP_INFO(node->get_logger(), "抓取位姿: POS(%f, %f, %f), ORI(%f, %f, %f, %f)",
+                grasp_pose.position.x, grasp_pose.position.y, grasp_pose.position.z,
+                grasp_pose.orientation.w, grasp_pose.orientation.x,
+                grasp_pose.orientation.y, grasp_pose.orientation.z);
+    RCLCPP_INFO(node->get_logger(), "准备位姿: POS(%f, %f, %f), ORI(%f, %f, %f, %f)",
+                result.position.x, result.position.y, result.position.z,
+                result.orientation.w, result.orientation.x,
+                result.orientation.y, result.orientation.z);
+
     return result;
 }
+
+
 
 /**
     @brief 根据父坐标系和期望位置，生成一个放置在某个位置的KFS
