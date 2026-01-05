@@ -47,6 +47,15 @@ class ArmHandleNode{
 public:
     explicit ArmHandleNode(const rclcpp::Node::SharedPtr node);
     ~ArmHandleNode();
+
+    // 关节空间
+    enum class PlanningMode {
+        JOINT_SPACE,    // 关节空间规划模式
+        CARTESIAN_SPACE, // 笛卡尔空间规划模式
+        HYBRID          // 混合模式（自动切换）
+    };
+
+    
 private:
     rclcpp::Node::SharedPtr node;
     rclcpp_action::Server<robot_interfaces::action::Catch>::SharedPtr arm_handle_server;  //机械臂任务接口
@@ -59,11 +68,11 @@ private:
     std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> current_goal_handle;
     moveit::core::RobotModelConstPtr robot_module;
     std::unique_ptr<std::thread> arm_task_thread;    //执行期望，解析plan并发布节点的线程
-    geometry_msgs::msg::Pose task_target_pos;
-    std::atomic<bool> is_running_arm_task{false}; // 
+    geometry_msgs::msg::Pose task_target_pos; // 目标位置
+    std::atomic<bool> is_running_arm_task{false}; // 目标位置
     std::atomic<bool> cancle_current_task{false};
     std::atomic<int> current_task_type{0}; // 任务类型
-    std::atomic<int> current_kfs_num{0};
+    std::atomic<int> current_kfs_num{0}; // kfs的数量
     std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer; // 坐标变换
     std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
     geometry_msgs::msg::TransformStamped camera_link0_tf;
@@ -71,8 +80,8 @@ private:
 
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr mark_pub_;
 
-    
-    geometry_msgs::msg::Pose attached_kfs_pos;
+
+    geometry_msgs::msg::Pose attached_kfs_pos; // 附着在吸盘上的KFS与机器人的相对关系
 
 
     //障碍物/KFS定义
@@ -87,9 +96,26 @@ private:
     //机械臂动作处理
     void arm_catch_task_handle();
     //bool send_plan(const moveit_msgs::msg::RobotTrajectory& trajectory);
-    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance );
+    // 计算从上方接近物体的准备位姿，返回准备位姿并通过 grasp_pose 输出最终抓取位姿（贴合上表面）
+    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose);
     bool add_attached_kfs_collision();
     bool remove_attached_kfs_collision();
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
     bool remove_kfs_collision(const std::string &object_id,const std::string &fram_id);
+
+    ///******************************************************
+    // 关节空间 
+    //  */
+    // 规划参数配置
+    const double SWITCH_DISTANCE_THRESHOLD = 0.15;  // 切换距离阈值（米）
+    const double CARTESIAN_GOAL_TOLERANCE = 0.001;   // 笛卡尔空间目标容差
+    const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差
+    const double VELOCITY_SCALING = 0.5;             // 速度缩放因子
+    const double ACCELERATION_SCALING = 0.5;         // 加速度缩放因子
+    // rclcpp::Node::SharedPtr node_;
+    // moveit::planning_interface::MoveGroupInterface::SharedPtr move_group_interface; 
+    moveit::planning_interface::PlanningSceneInterface planning_scene_;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_; // 坐标系变换
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_; // 接收和订阅坐标变换消息
+
 };

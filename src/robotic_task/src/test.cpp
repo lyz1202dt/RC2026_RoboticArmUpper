@@ -27,8 +27,10 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
     bool goal_sent_ = false;
 
+    // 目标发送函数详解
     void send_goal()
     {
+        // 确保整个生命周期内只发送一次目标
         if (goal_sent_) return;
         goal_sent_ = true;
 
@@ -46,14 +48,17 @@ private:
 
 
         //模拟的抓取位置姿
+            // 在 rviz2 中的显示为z轴方向
         goal_msg.target_pose.position.x = 0.0;//0.664748;
-        goal_msg.target_pose.position.y = 0.0;//-0.001824;
+            // 在 rviz2 中的显示为y轴方向
+        goal_msg.target_pose.position.y = -0.2;//-0.001824;
+            // 在 rviz2 中的显示为x轴方向
         goal_msg.target_pose.position.z = 0.5;//0.256471;
 
-        goal_msg.target_pose.orientation.w = 0.004481;  // 单位四元数
-        goal_msg.target_pose.orientation.x = 0.708322;
-        goal_msg.target_pose.orientation.y = -0.004257;
-        goal_msg.target_pose.orientation.z = -0.705862;
+        goal_msg.target_pose.orientation.w = 0.0; // 0.004481;  // 单位四元数
+        goal_msg.target_pose.orientation.x = 0.0; // 0.708322;
+        goal_msg.target_pose.orientation.y = 0.0; // -0.004257;
+        goal_msg.target_pose.orientation.z = 0.0; // -0.705862;
 
 
         // action 类型为 “移动”
@@ -79,6 +84,7 @@ private:
 
     void goal_response_cb(std::shared_ptr<GoalHandleCatch> handle)
     {
+        
         if (!handle) {
             RCLCPP_ERROR(this->get_logger(), "目标被拒绝！");
         } else {
