@@ -14,7 +14,9 @@
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 // #include <qt5/QtGui/qvalidator.h>
 #include <rclcpp/logging.hpp>
+#include <rclcpp/parameter.hpp>
 #include <rclcpp/parameter_client.hpp>
+#include <rclcpp/utilities.hpp>
 #include <string>
 #include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2_ros/transform_listener.hpp>
@@ -30,7 +32,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
 
     this->node = node;                                                                                         // 以依赖注入的方式，传入要管理的节点
 
-    param_client      = std::make_shared<rclcpp::SyncParametersClient>(node, "driver_node");
+    param_client      = nullptr;
     arm_task_thread   = std::make_unique<std::thread>(std::bind(&ArmHandleNode::arm_catch_task_handle, this)); // 创建机械臂任务执行线程
     arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(
         node, "robotic_task",                                                                                  // 创建动作服务-服务端
@@ -180,7 +182,13 @@ rclcpp_action::CancelResponse
     is_running_arm_task = false;
 
     // 删除之前添加的碰撞体，避免残留的虚拟碰撞体影响后续任务规划。
+    // 缓存规划框名称
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame()); 
+    
+
+    // 关闭气泵
+    set_air_pump(false);
+
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
@@ -501,19 +509,19 @@ void ArmHandleNode::arm_catch_task_handle() {
             }
 
             // // 步骤十：等待气泵稳定
-            //     // 调用 sleep_for 让线程休眠 2 秒
-            // std::this_thread::sleep_for(2s);
+                // 调用 sleep_for 让线程休眠 2 秒
+            std::this_thread::sleep_for(2s);
+            // 使用一个参数服务来启动气泵
+            std::vector<std::string> node_names = node->get_node_names();
+            if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
+            }
+            else {
+                set_air_pump(true);
+            }
+            RCLCPP_INFO(node->get_logger(), "启动气泵成功");
 
-            
 
-            // // 使用一个参数服务来启动气泵
-            // std::vector<std::string> node_names = node->get_node_names();
-            // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-            //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
-            // }
-            // else {
-            //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
-            // }
 
             // 步骤九：执行笛卡尔路径并发布反馈
             RCLCPP_INFO(node->get_logger(), "Debug-3");
@@ -533,7 +541,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             
 
             // 使用一个参数服务来启动气泵
-            std::vector<std::string> node_names = node->get_node_names();
+            // std::vector<std::string> node_names = node->get_node_names();
             // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
             //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
             // }
@@ -604,16 +612,17 @@ void ArmHandleNode::arm_catch_task_handle() {
                 RCLCPP_INFO(node->get_logger(), "Debug-12");
                 continue;
             } 
-            // else {
-            //     RCLCPP_INFO(node->get_logger(), "Debug-13");
-            //     if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-            //         RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
-            //     }
-            //     else {
-            //         param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-            //     }
-            //     RCLCPP_INFO(node->get_logger(), "Debug-14");
-            // }
+            else {
+                RCLCPP_INFO(node->get_logger(), "Debug-13");
+                if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                    RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
+                }
+                else {
+                    set_air_pump(false);
+                } 
+                RCLCPP_INFO(node->get_logger(), "Debug-14");
+                RCLCPP_INFO(node->get_logger(), "关闭气泵成功");
+            }
 
             // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
             //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
@@ -663,6 +672,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             current_goal_handle->succeed(finished_msg);
 
         } else if (current_task_type == ROBOTIC_ARM_TASK_PLACE_TARGET) { // 将车上的KFS吸起来，然后放到某个坐标
+            RCLCPP_INFO(node->get_logger(), "将KFS放到九宫格内");
             
             // 一、检查KFS可用性
             if (current_kfs_num == 0)                                    // 如果当前机器人上没有KFS，报告后等待下一个请求
@@ -712,24 +722,23 @@ void ArmHandleNode::arm_catch_task_handle() {
                     // move_group_interface->setMaxVelocityScalingFactor(0.7);
                     success = move_group_interface->plan(plan);
 
-                    
-                    //  // 十、添加注释掉的气泵启动代码 在规划完
-                    // std::vector<std::string> node_names = node->get_node_names();
-                    // if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-                    //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能开启气泵");
-                    // }
-                    // else {
-                    //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
-                    // }
-                    
-
                     if (success != moveit::core::MoveItErrorCode::SUCCESS) {
                         finished_msg->kfs_num = current_kfs_num;
                         finished_msg->reason  = "到达吸取KFS的位置失败，可能不可达";
                         current_goal_handle->abort(finished_msg);
                         continue_flag = true;
                         break;
+                    } else {
+                            // 十、添加注释掉的气泵启动代码 在规划完
+                        std::vector<std::string> node_names = node->get_node_names();
+                        if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+                            RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能开启气泵");
+                        }
+                        else {
+                            set_air_pump(true);
+                        }
                     }
+
                 } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
                 
             // 八、跳过失败任务的剩余代码
@@ -812,12 +821,13 @@ void ArmHandleNode::arm_catch_task_handle() {
             current_goal_handle->publish_feedback(feedback_msg);
 
             // 关闭气泵
-            // std::vector<std::string> node_names = node->get_node_names();
-            // if (std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()) {
-            //     RCLCPP_WARN(node->get_logger(), "没有driver_node节点,不能关闭气泵");
-            // } else {
-            //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
-            // }
+            std::vector<std::string> node_names = node->get_node_names();
+            if (std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()) {
+                RCLCPP_WARN(node->get_logger(), "没有driver_node节点,不能关闭气泵");
+            } else {
+                set_air_pump(false);
+            }
+            RCLCPP_INFO(node->get_logger(), "关闭气泵成功");
 
             // 删除附着碰撞体
             remove_attached_kfs_collision();
@@ -1229,6 +1239,55 @@ bool ArmHandleNode::remove_kfs_collision(const std::string& object_id, const std
     collision_object.operation       = collision_object.REMOVE;
     psi->applyCollisionObject(collision_object);
     return true;
+}
+
+bool ArmHandleNode::set_air_pump(bool enable){
+    RCLCPP_INFO(node->get_logger(), "%s气泵", enable?"开启":"关闭");
+
+    // 检查 driver_node 是否存在
+    auto node_names = node->get_node_names();
+    if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+        RCLCPP_INFO(node->get_logger(), "没有 driver_node 节点，不能%s气泵", enable?"开启":"关闭");
+        return false;
+    }
+
+
+    // 使用 AsyncParametersClient 替代 SyncParametersClient，避免同步调用可能带来的问题
+    // 注意：这里创建新的客户端而不是使用成员变量，避免状态问题
+    auto temp_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
+
+    // 等待服务器可用，最多等待 1s
+    if(!temp_client->wait_for_service(1s)){
+        RCLCPP_WARN(node->get_logger(), "driver_node 参数服务不可用");    
+        return false;
+    }
+    
+    // 异步设置参数
+    auto future = temp_client->set_parameters({rclcpp::Parameter("enable_air_pump", enable)});
+    
+    // 等待结果，最多等待1秒
+    try {
+        const auto& results = future.get();
+
+        // 检查结果向量是否非空
+        if (results.empty()) {
+            RCLCPP_WARN(node->get_logger(), "气泵%s失败：返回结果为空", enable ? "开启" : "关闭");
+            return false;
+        }
+
+        // 检查第一个参数的结果（通常只需要检查第一个）
+        const auto& result = results.front();
+        if (result.successful) {
+            RCLCPP_INFO(node->get_logger(), "气泵%s成功", enable ? "开启" : "关闭");
+            return true;
+        } else {
+            RCLCPP_WARN(node->get_logger(), "气泵%s失败", enable ? "开启" : "关闭");
+            return false;
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(node->get_logger(), "气泵%s异常: %s", enable ? "开启" : "关闭", e.what());
+        return false;
+    }
 }
 
 

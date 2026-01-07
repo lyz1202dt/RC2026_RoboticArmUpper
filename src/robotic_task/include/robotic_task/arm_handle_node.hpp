@@ -66,7 +66,7 @@ private:
     std::condition_variable task_cv_;
     bool has_new_task_{false}; // 是否开始新线程
 
-    rclcpp::SyncParametersClient::SharedPtr param_client;
+    rclcpp::AsyncParametersClient::SharedPtr param_client;
     std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> current_goal_handle;
     moveit::core::RobotModelConstPtr robot_module;
     std::unique_ptr<std::thread> arm_task_thread;    //执行期望，解析plan并发布节点的线程
@@ -111,6 +111,7 @@ private:
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
     bool remove_kfs_collision(const std::string &object_id,const std::string &fram_id);
 
+    bool set_air_pump(bool enable); // 设置气泵参数
     ///******************************************************
     // 关节空间 
     //  */
