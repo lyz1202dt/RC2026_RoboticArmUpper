@@ -122,8 +122,11 @@ private:
     const double ACCELERATION_SCALING = 0.5;         // 加速度缩放因子
     // rclcpp::Node::SharedPtr node_;
     // moveit::planning_interface::MoveGroupInterface::SharedPtr move_group_interface; 
-    moveit::planning_interface::PlanningSceneInterface planning_scene_;
+    // moveit::planning_interface::PlanningSceneInterface planning_scene_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_; // 坐标系变换
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_; // 接收和订阅坐标变换消息
-
+    geometry_msgs::msg::Pose calculate_prepare_pos_with_orientation(const geometry_msgs::msg::Pose& box_pos, 
+    double approach_distance, 
+    geometry_msgs::msg::Pose &grasp_pose, 
+    ApproachMode mode);
 };
