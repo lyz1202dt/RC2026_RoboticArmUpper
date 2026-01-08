@@ -463,7 +463,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
             // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
-            const double slow_down_factor = 2.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
+            const double slow_down_factor = 10.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
             if (slow_down_factor > 1.0) {
                 RCLCPP_INFO(node->get_logger(), "放慢笛卡尔轨迹: slow_down_factor=%.2f", slow_down_factor);
                 for (auto &point : cart_trajectory.joint_trajectory.points) {

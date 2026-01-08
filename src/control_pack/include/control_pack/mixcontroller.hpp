@@ -25,6 +25,8 @@
 
 namespace mixcontroller {
 
+
+// 五次多项式轨迹插值算法
 class QuinticParam {
 public:
     void set_param(
@@ -45,6 +47,8 @@ private:
     double t1{0.0};
 };
 
+
+// 管理多段连续轨迹的执行
 class ContinuousTrajectory {
 public:
     explicit ContinuousTrajectory();
@@ -58,6 +62,8 @@ private:
     trajectory_msgs::msg::JointTrajectory trajectory;                                              // 当前要执行的轨迹
 };
 
+
+// 主控
 class MixController : public controller_interface::ControllerInterface {
 public:
     MixController();
