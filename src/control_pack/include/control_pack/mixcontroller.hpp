@@ -57,13 +57,12 @@ public:
     void set_trajectory(const trajectory_msgs::msg::JointTrajectory& trajectory);                  // 设置原始轨迹
 private:
     QuinticParam line[6];
-    size_t cur_index;
+    size_t cur_index; // points 容器的大小
     rclcpp::Time start_time;
-    trajectory_msgs::msg::JointTrajectory trajectory;                                              // 当前要执行的轨迹
+    trajectory_msgs::msg::JointTrajectory trajectory;   // 当前要执行的轨迹
 };
 
 
-// 主控
 class MixController : public controller_interface::ControllerInterface {
 public:
     MixController();
@@ -98,11 +97,11 @@ private:
     rclcpp::SyncParametersClient::SharedPtr robot_description_param_;
 
     // 动力学参数计算
-    KDL::Vector gravity;
-    std::shared_ptr<KDL::ChainDynParam> dyn;
-    KDL::JntSpaceInertiaMatrix M_kdl;
-    KDL::JntArray C_kdl, G_kdl;
-    KDL::JntArray q_kdl, dq_kdl, ddq_kdl;
+    KDL::Vector gravity; // 重力向量
+    std::shared_ptr<KDL::ChainDynParam> dyn; // 动力学计算对象
+    KDL::JntSpaceInertiaMatrix M_kdl; //  惯性矩阵
+    KDL::JntArray C_kdl, G_kdl; // 科里奥利力和重力
+    KDL::JntArray q_kdl, dq_kdl, ddq_kdl; // 科里奥利力和重力
 
 
     rclcpp_action::GoalResponse

@@ -377,9 +377,9 @@ void ArmHandleNode::arm_catch_task_handle() {
                 if(success){
                     RCLCPP_INFO(node->get_logger(), "规划到过渡位置成功");
                 } else {
-                    finished_msg->reason = "机械臂无法到达过渡位置，路径规划失败";
-                    // abort  → 终止当前目标，状态设为"失败",并返回finished_msg
-                    current_goal_handle->abort(finished_msg);
+                    // finished_msg->reason = "机械臂无法到达过渡位置，路径规划失败";
+                    // // abort  → 终止当前目标，状态设为"失败",并返回finished_msg
+                    // current_goal_handle->abort(finished_msg);
                     RCLCPP_WARN(node->get_logger(), "过渡位置规划失败，尝试直接规划到目标");
                     // 如果过渡位置也失败，尝试直接规划（可能原来能走的路径被阻挡）
                 }
