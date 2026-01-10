@@ -130,4 +130,7 @@ private:
     double approach_distance, 
     geometry_msgs::msg::Pose &grasp_pose, 
     ApproachMode mode);
+
+    int count ; // 次数可以是任何事情的次数
+    const int MAX_COUNT_ = 100;
 };

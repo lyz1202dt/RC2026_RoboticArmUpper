@@ -1,7 +1,12 @@
+<!-- 插件描述文件 -->
+
+<!-- 库声明 -->
 <library path="mixcontroller">
+  <!-- 类声明 -->
   <class name="mixcontroller/MixController"
          type="mixcontroller::MixController"
          base_class_type="controller_interface::ControllerInterface">
+    <!-- 描述 -->
     <description>扩展版机械臂控制器，支持位置/速度/力矩多接口+力矩前馈</description>
   </class>
 </library>

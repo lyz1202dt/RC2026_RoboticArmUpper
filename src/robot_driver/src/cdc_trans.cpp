@@ -1,25 +1,33 @@
+// 通过 USB CDC （虚拟串口）与下位机通信
+
+
 #include <cdc_trans.hpp>
-#include <rclcpp/logging.hpp>
-#include <rclcpp/rclcpp.hpp>
+#include <rclcpp/logging.hpp> // ros2 日志
+#include <rclcpp/rclcpp.hpp> // ros2 核心
 
+// 构造函数
 CDCTrans::CDCTrans() {
-    _disconnected     = true;
-    _handling_events  = true;
-    _need_reconnected = false;
-    interfaces_num    = 0;
-    libusb_init(&ctx);
+    _disconnected     = true; // 初始为断开状态
+    _handling_events  = true; // 处理事件标志
+    _need_reconnected = false; // 不需要重连
+    interfaces_num    = 0; // 接口数量
+    libusb_init(&ctx);  // 初始化 libusb
 }
 
+// 析构函数
 CDCTrans::~CDCTrans() {
-    _handling_events = false;
-    close();
-    libusb_exit(ctx);
+    _handling_events = false; // 停止处理事件
+    close();                  // 关闭设备
+    libusb_exit(ctx);         // 清理 libusb
 }
 
+// 打开设备
 bool CDCTrans::open(uint16_t vid, uint16_t pid ){
-    last_vid             = vid;
-    last_pid             = pid;
+    last_vid             = vid;  // 保存 VID
+    last_pid             = pid;  // 保存 PID
     this->interfaces_num = 1;
+
+    // 根据 VID/PID 打开设备
     handle = libusb_open_device_with_vid_pid(ctx, vid, pid);
     RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"尝试打开USB-CDC设备");
     if (!handle)
@@ -28,12 +36,14 @@ bool CDCTrans::open(uint16_t vid, uint16_t pid ){
         return false;
     }
     
+    // 分离内核驱动
     if (libusb_kernel_driver_active(handle, 1))
     {
         int ret=libusb_detach_kernel_driver(handle, 1);
         RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"从系统内核卸载USB设备接口1，返回%d",ret);
     }
     
+    // 申请接口
     int ret=libusb_claim_interface(handle, 1); // 获取通道1
     RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"获取CDC设备通道1，返回%d",ret);
 
@@ -41,11 +51,12 @@ bool CDCTrans::open(uint16_t vid, uint16_t pid ){
     recv_transfer = libusb_alloc_transfer(0);
     RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"分配异步传输结构体，地址%p",(void*)recv_transfer);
     
-    // 填写异步传输结构体参数
+    // 填写异步传输结构体参数，（填写异步接收回调）
     libusb_fill_bulk_transfer(
         recv_transfer, handle, EP_IN, cdc_rx_buffer,
         sizeof(cdc_rx_buffer),
         [](libusb_transfer* transfer) -> void {
+
             auto self = static_cast<CDCTrans*>(transfer->user_data);
             //RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"USB传输事件完成，状态%d",transfer->status);
             if (!self->_handling_events) {
@@ -67,6 +78,7 @@ bool CDCTrans::open(uint16_t vid, uint16_t pid ){
         this, 0);
 
     // 如果平台支持热插拔
+    // 注册热插拔回调
     if (libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
         int rc = libusb_hotplug_register_callback(
             ctx,
@@ -94,23 +106,27 @@ bool CDCTrans::open(uint16_t vid, uint16_t pid ){
     return true;
 }
 
+// 关闭设备
 void CDCTrans::close() {
     if (recv_transfer) {
-        libusb_cancel_transfer(recv_transfer);
-        libusb_free_transfer(recv_transfer);
+        libusb_cancel_transfer(recv_transfer); // 取消传输
+        libusb_free_transfer(recv_transfer); // 释放传输结构体
         recv_transfer = nullptr;
     }
     if (handle) {
-        libusb_release_interface(handle, interfaces_num);
-        libusb_close(handle);
+        libusb_release_interface(handle, interfaces_num); // 释放接口
+        libusb_close(handle); // 关闭设备
         handle = nullptr;
     }
 }
 
+// 发送数据
 int CDCTrans::send(const uint8_t* data, int size, unsigned int time_out) {
     int actual_size;
     if(_disconnected)
-        return -2;
+        return -2; // 设备断开
+
+    // 同步批量传输
     int rc = libusb_bulk_transfer(handle, EP_OUT, (uint8_t*)data, size, &actual_size, time_out);
     if (rc != 0)
     {
@@ -121,27 +137,31 @@ int CDCTrans::send(const uint8_t* data, int size, unsigned int time_out) {
         return actual_size;
 }
 
+// 处理事件
 void CDCTrans::process_once() {
-    timeval tv = {.tv_sec = 0, .tv_usec = 50000};   //50ms
+    timeval tv = {.tv_sec = 0, .tv_usec = 50000};   // 50ms 超时
     //RCLCPP_INFO(rclcpp::get_logger("cdc_device"),"进行一次事件处理");
+
+    // 处理 USB 事件
     libusb_handle_events_timeout_completed(ctx, &tv, nullptr);
     if (_disconnected) {
         close();
     }
     if (_need_reconnected) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        open(last_vid, last_pid);
+        open(last_vid, last_pid); // 重连
     }
 }
 
+// 注册回调
 void CDCTrans::regeiser_recv_cb(std::function<void(const uint8_t* data, int size)> recv_cb) {
-    cdc_recv_cb = std::move(recv_cb);
+    cdc_recv_cb = std::move(recv_cb); // 保存接收回调
 }
 
 void CDCTrans::on_hotplug(libusb_hotplug_event event) {
     if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
-        _disconnected = true;
+        _disconnected = true;   // 设备断开
     } else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
-        _need_reconnected = true;
+        _need_reconnected = true; // 需要重连
     }
 }

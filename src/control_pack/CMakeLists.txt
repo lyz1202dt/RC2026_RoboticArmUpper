@@ -45,10 +45,12 @@ pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
 
 pluginlib_export_plugin_description_file(controller_interface mixcontroller_plugin.xml)
 
+# 
 add_library(mycontrol SHARED
   src/mycontrol.cpp
 )
 
+# 
 add_library(mixcontroller SHARED
   src/mixcontroller.cpp
 )

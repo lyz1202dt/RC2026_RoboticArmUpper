@@ -1,7 +1,9 @@
-#include "robot_interfaces/msg/arm.hpp"
-#include "sensor_msgs/msg/joint_state.hpp"
+// 负责上位机和下位机双向数据通信
+
+#include "robot_interfaces/msg/arm.hpp" // 机械臂数据结构
+#include "sensor_msgs/msg/joint_state.hpp" // 关节状态
 #include <chrono>
-#include <rclcpp/parameter.hpp>
+#include <rclcpp/parameter.hpp> // 在运行时动态修改节点配置
 #include <rclcpp/time.hpp>
 #include <serialnode.hpp>
 
@@ -10,9 +12,12 @@ using namespace std::chrono_literals;
 SerialNode::SerialNode()
     : Node("driver_node") {
 
-    arm_target.pack_type = 1;
+    arm_target.pack_type = 1; // 初始化目标数据包的消息类型为1
 
+    // 
     this->declare_parameter("enable_air_pump", false); // 使能气泵
+
+    // 参数变化的回调函数
     param_server_handle = this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& param) {
         rcl_interfaces::msg::SetParametersResult result;
         (void)param;

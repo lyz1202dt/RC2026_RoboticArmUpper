@@ -1,5 +1,5 @@
 #include "arm_handle_node.hpp"
-#include "GraspOrientionController.hpp"
+// #include "GraspOrientionController.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "moveit_msgs/msg/attached_collision_object.hpp"
 #include "shape_msgs/msg/solid_primitive.hpp"
@@ -409,6 +409,12 @@ void ArmHandleNode::arm_catch_task_handle() {
             // move_group_interface->setMaxAccelerationScalingFactor(0.7);
             // move_group_interface->setMaxVelocityScalingFactor(0.7);
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
+            count = 0;
+            while(success == false && count <=  MAX_COUNT_){
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                count ++ ;
+            }
             if(success){
                 RCLCPP_INFO(node->get_logger(), "准备位置规划成功");
             } else {
@@ -492,9 +498,11 @@ void ArmHandleNode::arm_catch_task_handle() {
                 }
             }
 
-            while(fraction < 0.995f){
+            count = 0;
+            while(fraction < 0.995f && count <= MAX_COUNT_){
                 RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划：%4f", fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+                count ++;
             }
 
             // 步骤八：笛卡尔规划失败处理
@@ -504,8 +512,10 @@ void ArmHandleNode::arm_catch_task_handle() {
                 finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
                 // 调用 abort 终止目标
                 current_goal_handle->abort(finished_msg);
-                RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
+                RCLCPP_WARN(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
                 continue;
+            } else {
+                RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
             }
 
             // // 步骤十：等待气泵稳定
@@ -804,6 +814,13 @@ void ArmHandleNode::arm_catch_task_handle() {
             // move_group_interface->setMaxAccelerationScalingFactor(0.1);
             // move_group_interface->setMaxVelocityScalingFactor(0.1);
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            
+            count = 0;
+            while(fraction < 0.995f && count <= MAX_COUNT_){
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划：%4f", fraction);
+                fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+                count ++;
+            }
             if (fraction < 0.995f)             // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
@@ -840,6 +857,13 @@ void ArmHandleNode::arm_catch_task_handle() {
             // move_group_interface->setMaxAccelerationScalingFactor(0.1);
             // move_group_interface->setMaxVelocityScalingFactor(0.1);
             fraction      = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            
+            count = 0;
+            while(fraction < 0.995f && count <= MAX_COUNT_){
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划：%4f", fraction);
+                fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+                count ++;
+            }
             if (fraction < 0.995f) // 如果轨迹生成失败
             {
                 finished_msg->kfs_num = current_kfs_num;
