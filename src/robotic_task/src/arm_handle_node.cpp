@@ -369,7 +369,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                // 设置过渡位置
             do{
                 move_group_interface->setStartStateToCurrentState();    
-                move_group_interface->setNamedTarget("kfs4_interim_1_pos");
+                move_group_interface->setNamedTarget("kfs4_interim_2_pos");
 
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
