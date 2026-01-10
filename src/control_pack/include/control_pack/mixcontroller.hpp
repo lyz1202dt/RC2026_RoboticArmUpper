@@ -88,7 +88,7 @@ private:
 
     std::vector<std::string> joint_names_;
 
-    ContinuousTrajectory continue_trajectory;
+    ContinuousTrajectory continue_trajectory; // 轨迹管理对象：负责存储轨迹、计算插值
 
     KDL::Tree tree;
     KDL::Chain chain;

@@ -1,4 +1,4 @@
-#include "control_pack/mixcontroller.hpp"
+#include "control_pack/mixcontroller.hpp" 
 #include <Eigen/src/Core/Matrix.h>
 #include <chrono>
 #include <memory>
@@ -18,11 +18,10 @@ void QuinticParam::set_param(
     double T4 = T3 * T; // 四次
     double T5 = T4 * T; // 五次
 
+    // 五次多项式求解啊
     f = p0; // 常数项设为起点位置
     e = v0; // 将一次项系数设为起点速度
     d = a0 / 2.0;   // 将二次项系数设为起点加速度的一半
-
-    // 
     a = (12 * (pt - p0) - 6 * (v1 + v0) * T - (at - a0) * T2) / (2 * T5);
     b = (-30 * (pt - p0) + (14 * v1 + 16 * v0) * T + (3 * a0 - 2 * at) * T2) / (2 * T4);
     c = (20 * (pt - p0) - (8 * v1 + 12 * v0) * T - (3 * a0 - at) * T2) / (2 * T3);
@@ -122,6 +121,8 @@ MixController::MixController() { param_node = std::make_shared<rclcpp::Node>("pa
 
 // 控制器初始化：创建 Action 服务器、分配内存、准备数据结构
 controller_interface::CallbackReturn MixController::on_init() {
+
+    // get_node(), 获取ros2节点指针
     RCLCPP_INFO(this->get_node()->get_logger(), "混合控制器初始化");
 
     // 作用：创建一个服务器，接收轨迹命令
@@ -210,6 +211,7 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
     }
 
     // 五次多项式插值计算输出
+    // get_target 读取当前播放位置
     bool ret = continue_trajectory.get_target(time, output_state);
 
     // 填充 KDL 数据结构
@@ -280,56 +282,84 @@ controller_interface::InterfaceConfiguration MixController::state_interface_conf
     return cfg;
 }
 
+// 处理轨迹执行请求
 rclcpp_action::GoalResponse MixController::handle_goal(
-    const rclcpp_action::GoalUUID& uuid, const std::shared_ptr<const control_msgs::action::FollowJointTrajectory::Goal> goal
+    const rclcpp_action::GoalUUID& uuid, // 目标唯一标识符
+    const std::shared_ptr<const control_msgs::action::FollowJointTrajectory::Goal> goal // 目标内容
 ) {
+    // 如果正在执行其他轨迹，拒绝新目标
     if (is_execut_trajectory)
         return rclcpp_action::GoalResponse::REJECT;
+
+    // 重置取消执行
     cancle_execut = false;
+
+    // 将目标中的轨迹数据保存到控制器
+    // set_trajectory 接收轨迹
     continue_trajectory.set_trajectory(goal->trajectory);            // 设置要执行的轨迹
 
-    RCLCPP_INFO(this->get_node()->get_logger(), "接受轨迹");
+    RCLCPP_INFO(this->get_node()->get_logger(), "接收轨迹");
     return rclcpp_action::GoalResponse ::ACCEPT_AND_EXECUTE;
 }
 
+// 处理轨迹取消请求
 rclcpp_action::CancelResponse
     MixController::handle_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle) {
+    // 标记未使用的参数
     (void)goal_handle;
+
+    // 停止轨迹执行
     is_execut_trajectory = false;
+
+    // 标记已取消
     cancle_execut        = true;
+
+    // 接受取消请求
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
+
+// 开始执行轨迹
 void MixController::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle) {
+    // 标记开始执行轨迹
     is_execut_trajectory  = true;
+
+    // 保存目标句柄（用于后续发送反馈和结果）
     activate_goal_handle_ = goal_handle;
+
     RCLCPP_INFO(this->get_node()->get_logger(), "执行轨迹");
+
+    // 设置轨迹开始时间为当前时间
+    // start_track 执行轨迹
     continue_trajectory.start_track(get_node()->get_clock()->now()); // 开始执行轨迹
 }
 
+// 计算机器人动力学，计算前馈力矩
 Eigen::Vector<double, 6> MixController::dynamicCalc() {
     // 5. 调用 KDL 动力学函数
-    dyn->JntToMass(q_kdl, M_kdl);
-    dyn->JntToCoriolis(q_kdl, dq_kdl, C_kdl);
-    dyn->JntToGravity(q_kdl, G_kdl);
+    dyn->JntToMass(q_kdl, M_kdl); // 计算惯性矩阵
+    dyn->JntToCoriolis(q_kdl, dq_kdl, C_kdl); // 计算科里奥利力
+    dyn->JntToGravity(q_kdl, G_kdl); // 计算重力
 
     // 6. 转换 KDL 输出到 Eigen，方便矩阵运算
-    Eigen::Matrix<double, 6, 6> M_mat;
-    Eigen::Matrix<double, 6, 1> C, G, ddq;
+    Eigen::Matrix<double, 6, 6> M_mat; // 惯性矩阵
+    Eigen::Matrix<double, 6, 1> C, G, ddq; // 向量
 
     for (int i = 0; i < 6; ++i) {
-        C(i)   = C_kdl(i);
-        G(i)   = G_kdl(i);
-        ddq(i) = ddq_kdl(i);
+        C(i)   = C_kdl(i); // 科里奥利力
+        G(i)   = G_kdl(i); // 重力
+        ddq(i) = ddq_kdl(i); // 加速度
         for (int j = 0; j < 6; ++j) {
-            M_mat(i, j) = M_kdl(i, j);
+            M_mat(i, j) = M_kdl(i, j); // 惯性矩阵元素
         }
     }
     // 7. 计算前馈力矩 tau
+    // 计算前馈力矩：τ = M·ddq + C + G
     return (M_mat * ddq + C + G);
 }
 
 
 } // namespace mixcontroller
 
+// 把控制器类导出为 ROS 2 插件
 PLUGINLIB_EXPORT_CLASS(mixcontroller::MixController, controller_interface::ControllerInterface)
