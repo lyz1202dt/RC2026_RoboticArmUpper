@@ -31,9 +31,8 @@ using namespace std::chrono_literals;
 ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
 
     this->node = node;                                                                                         // 以依赖注入的方式，传入要管理的节点
-
-    param_client      = nullptr;
-    arm_task_thread   = std::make_unique<std::thread>(std::bind(&ArmHandleNode::arm_catch_task_handle, this)); // 创建机械臂任务执行线程
+    param_client      = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
+    arm_task_thread   = nullptr; // 延后创建线程，确保构造完成后再启动
     arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(
         node, "robotic_task",                                                                                  // 创建动作服务-服务端
         std::bind(&ArmHandleNode::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
@@ -50,8 +49,11 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_mark", 10);
 
     node->create_wall_timer(100ms, [this]() {
-        if(!is_running_arm_task)    //如果此时没有进行机械臂抓取，那么立即返回
-            return;
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            if(!is_running_arm_task)    //如果此时没有进行机械臂抓取，那么立即返回
+                return;
+        }
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = "base_link";
         marker.header.stamp    = this->node->now();
@@ -114,6 +116,14 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
     tf_buffer_= std::make_shared<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // 在构造函数末尾启动任务线程，避免部分成员尚未初始化时线程读取它们
+    try {
+        arm_task_thread = std::make_unique<std::thread>(std::bind(&ArmHandleNode::arm_catch_task_handle, this));
+    } catch (const std::exception &e) {
+        RCLCPP_WARN(node->get_logger(), "创建机械臂任务线程失败: %s", e.what());
+        arm_task_thread = nullptr;
+    }
+
 }
 
 
@@ -125,15 +135,18 @@ ArmHandleNode::~ArmHandleNode() {
     task_mutex_.unlock(); // 解锁
     task_cv_.notify_all(); // 唤醒等待条件变量的线程
 
-    if (arm_task_thread->joinable()) // 检测线程是否还在运行
+    if (arm_task_thread && arm_task_thread->joinable()) // 检测线程是否还在运行
         arm_task_thread->join(); // 等待线程结束
 }
 
 rclcpp_action::GoalResponse
     ArmHandleNode::handle_goal(const rclcpp_action::GoalUUID& uuid, std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal) {
     (void)uuid;
-    if (is_running_arm_task) // 如果正在运行机械臂动作，那么拒绝新的请求
-        return rclcpp_action::GoalResponse::REJECT;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        if (is_running_arm_task) // 如果正在运行机械臂动作，那么拒绝新的请求
+            return rclcpp_action::GoalResponse::REJECT;
+    }
 
     try {
         camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
@@ -179,7 +192,10 @@ rclcpp_action::CancelResponse
     ArmHandleNode::cancel_goal(const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> goal_handle) {
     (void)goal_handle;
     cancle_current_task = true;
-    is_running_arm_task = false;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        is_running_arm_task = false;
+    }
 
     // 删除之前添加的碰撞体，避免残留的虚拟碰撞体影响后续任务规划。
     // 缓存规划框名称
@@ -195,7 +211,10 @@ rclcpp_action::CancelResponse
 void ArmHandleNode::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> goal_handle) {
     current_goal_handle = goal_handle;
     // 设置取消标志，通知执行循环终止当前任务
-    is_running_arm_task = true;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        is_running_arm_task = true;
+    }
 
     // 更新任务状态，表示机械臂任务已停止
     cancle_current_task = false;
@@ -269,7 +288,10 @@ void ArmHandleNode::arm_catch_task_handle() {
     while (rclcpp::ok()) {
         continue_flag = false;
 
-        is_running_arm_task = false;
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            is_running_arm_task = false;
+        }
         std::unique_lock<std::mutex> lock(task_mutex_);
 
         // 等待直到lambda表达式返回真
@@ -317,7 +339,14 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 计算轨迹，存入plan并判断规划是否成功
             // move_group_interface->setMaxAccelerationScalingFactor(0.7);
             // move_group_interface->setMaxVelocityScalingFactor(0.7);
+            
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划当前位置到目标位置的曲线
+            count = 0;
+            while(success == false && count <=  MAX_COUNT_){
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                count ++ ;
+            }
             if (success) {                                                                               // 阻塞函数，发送轨迹
 
                 // 执行规划好的轨迹并将结果保存到ret中
@@ -374,6 +403,12 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
                 if(success){
                     RCLCPP_INFO(node->get_logger(), "规划到过渡位置成功");
                 } else {
@@ -444,7 +479,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 步骤五：删除碰撞体进行抓取
                 // getPlanningFrame 获取运动规划器的id
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
-            RCLCPP_INFO(node->get_logger(), "Debug-1");
+            // RCLCPP_INFO(node->get_logger(), "Debug-1");
             // 步骤六：设置笛卡尔路径点（从准备位姿沿表面法向量直线接近）
                 // 创建包含准备位姿和抓取位姿的路点数组 way_points
             std::vector<geometry_msgs::msg::Pose> way_points;
@@ -465,7 +500,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             // ============================================================================================
 
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
-            RCLCPP_INFO(node->get_logger(), "Debug-2");
+            // RCLCPP_INFO(node->get_logger(), "Debug-2");
 
             // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
             // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
@@ -499,10 +534,10 @@ void ArmHandleNode::arm_catch_task_handle() {
             }
 
             count = 0;
-            while(fraction < 0.995f && count <= MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划：%4f", fraction);
+            while(fraction < 0.995f && count < MAX_COUNT_){
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.3f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                count ++;
+                count++;
             }
 
             // 步骤八：笛卡尔规划失败处理
@@ -518,23 +553,21 @@ void ArmHandleNode::arm_catch_task_handle() {
                 RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
             }
 
-            // // 步骤十：等待气泵稳定
+            // 步骤十：等待气泵稳定并启动
                 // 调用 sleep_for 让线程休眠 2 秒
             std::this_thread::sleep_for(2s);
-            // 使用一个参数服务来启动气泵
+            
+            // 启动气泵
             std::vector<std::string> node_names = node->get_node_names();
-            if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
+            if(std::find(node_names.begin(), node_names.end(), "/driver_node") != node_names.end()){
+                set_air_pump(true);
+                RCLCPP_INFO(node->get_logger(), "启动气泵成功");
+            } else {
                 RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
             }
-            else {
-                set_air_pump(true);
-            }
-            RCLCPP_INFO(node->get_logger(), "启动气泵成功");
-
-
 
             // 步骤九：执行笛卡尔路径并发布反馈
-            RCLCPP_INFO(node->get_logger(), "Debug-3");
+            // RCLCPP_INFO(node->get_logger(), "Debug-3");
 
             move_group_interface->execute(cart_trajectory);
 
@@ -543,11 +576,11 @@ void ArmHandleNode::arm_catch_task_handle() {
             feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
-            RCLCPP_INFO(node->get_logger(), "Debug-4");
+            // RCLCPP_INFO(node->get_logger(), "Debug-4");
             // 步骤十：等待气泵稳定
                 // 调用 sleep_for 让线程休眠 2 秒
             // std::this_thread::sleep_for(2s);
-            RCLCPP_INFO(node->get_logger(), "Debug-5");
+            // RCLCPP_INFO(node->get_logger(), "Debug-5");
             
 
             // 使用一个参数服务来启动气泵
@@ -558,18 +591,18 @@ void ArmHandleNode::arm_catch_task_handle() {
             // else {
             //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
             // }
-            RCLCPP_INFO(node->get_logger(), "Debug-6");
+            // RCLCPP_INFO(node->get_logger(), "Debug-6");
 
             // 步骤十一：发布吸附启动反馈
             feedback_msg->current_state  = 3;
             feedback_msg->state_describe = "启动气泵吸取KFS";
             current_goal_handle->publish_feedback(feedback_msg);
-            RCLCPP_INFO(node->get_logger(), "Debug-7");
+            // RCLCPP_INFO(node->get_logger(), "Debug-7");
 
             // 步骤十二：添加附着碰撞体
                 // 调用 add_attached_kfs_collision 函数将已吸附的 KFS 添加为机械臂末端的附着碰撞体
             add_attached_kfs_collision();
-            RCLCPP_INFO(node->get_logger(), "Debug-8");
+            // RCLCPP_INFO(node->get_logger(), "Debug-8");
 
             // 步骤十三：根据KFS数量选择目标位置
             if (current_kfs_num == 0)                                   // 根据当前机器人上的情况设置目标
@@ -578,7 +611,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 move_group_interface->setNamedTarget("kfs2_touch_pos");
             else
                 move_group_interface->setNamedTarget("kfs3_hold_pos");
-            RCLCPP_INFO(node->get_logger(), "Debug-9");
+            // RCLCPP_INFO(node->get_logger(), "Debug-9");
             
             // 步骤十四：规划并执行到放置位置
             do {
@@ -587,6 +620,12 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
                 if (!success) {
                     finished_msg->kfs_num = current_kfs_num;
                     finished_msg->reason  = "机械臂无法到达放置KFS的位置，路径规划失败";
@@ -595,19 +634,21 @@ void ArmHandleNode::arm_catch_task_handle() {
                     remove_attached_kfs_collision();
                     continue_flag = true;
                     break;
+                } else { 
+                    RCLCPP_INFO(node->get_logger(), "放置 KFS 位置规划成功");
                 }
             } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS); // 如果执行失败那么尝试重新规划并执行
            
             // 步骤十五：继续后续操作
             if (continue_flag)
                 continue;
-            RCLCPP_INFO(node->get_logger(), "Debug-10");
+            // RCLCPP_INFO(node->get_logger(), "Debug-10");
 
             // 步骤十六：发布到达放置位置反馈
             feedback_msg->current_state  = 4;
             feedback_msg->state_describe = "机械臂到达放置KFS的位置";
             current_goal_handle->publish_feedback(feedback_msg);
-            RCLCPP_INFO(node->get_logger(), "Debug-11");
+            // RCLCPP_INFO(node->get_logger(), "Debug-11");
 
             // 步骤十七：检查是否需要手持KFS
             if (current_kfs_num
@@ -619,18 +660,18 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->succeed(finished_msg);
                 // param_client->set_parameters({rclcpp::Parameter("enable_air_pump", false)});
                 // remove_attached_kfs_collision("kfs", "link6");
-                RCLCPP_INFO(node->get_logger(), "Debug-12");
+                // RCLCPP_INFO(node->get_logger(), "Debug-12");
                 continue;
             } 
             else {
-                RCLCPP_INFO(node->get_logger(), "Debug-13");
+                // RCLCPP_INFO(node->get_logger(), "Debug-13");
                 if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
                     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能关闭气泵");
                 }
                 else {
                     set_air_pump(false);
                 } 
-                RCLCPP_INFO(node->get_logger(), "Debug-14");
+                // RCLCPP_INFO(node->get_logger(), "Debug-14");
                 RCLCPP_INFO(node->get_logger(), "关闭气泵成功");
             }
 
@@ -659,13 +700,19 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
                 if (!success) {
                     finished_msg->kfs_num = current_kfs_num;
                     finished_msg->reason  = "机械臂无法回到空闲位置，路径规划失败";
                     current_goal_handle->abort(finished_msg);
                     continue_flag = true;
                     break;
-                }
+                } 
             } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
             if (continue_flag)
                 continue;
@@ -706,16 +753,22 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 四、规划到准备吸取位置
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
-                auto success = move_group_interface->plan(plan);
-                if (success != moveit::core::MoveItErrorCode::SUCCESS) {
-                    finished_msg->kfs_num = current_kfs_num;
-                    finished_msg->reason  = "到达准备吸取KFS的位置失败，可能不可达";
-                    current_goal_handle->abort(finished_msg);
-                    continue;
-                }
+                do{
+                    auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    count = 0;
+                    while(success == false && count <=  MAX_COUNT_){
+                        success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                        RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                        count ++ ;
+                    }
+                    if (success != true) {
+                        finished_msg->kfs_num = current_kfs_num;
+                        finished_msg->reason  = "到达准备吸取KFS的位置失败，可能不可达";
+                        current_goal_handle->abort(finished_msg);
+                        continue;
+                    }
+                } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
 
-            // 五、执行到准备吸取位置
-                success = move_group_interface->execute(plan);
 
             // 六、发布到达待吸取位置反馈
                 feedback_msg->current_state  = 1;
@@ -730,8 +783,13 @@ void ArmHandleNode::arm_catch_task_handle() {
                     move_group_interface->setNamedTarget(name_tag + "_touch_pos"); // 到达吸取KFS的位置
                     // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                     // move_group_interface->setMaxVelocityScalingFactor(0.7);
-                    success = move_group_interface->plan(plan);
-
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    count = 0;
+                    while(success == false && count <=  MAX_COUNT_){
+                        success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                        RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                        count ++ ;
+                    }
                     if (success != moveit::core::MoveItErrorCode::SUCCESS) {
                         finished_msg->kfs_num = current_kfs_num;
                         finished_msg->reason  = "到达吸取KFS的位置失败，可能不可达";
@@ -782,8 +840,14 @@ void ArmHandleNode::arm_catch_task_handle() {
                 move_group_interface->setPoseTarget(task_target_pos); // 放置任务——要放置的坐标
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
-                auto success = move_group_interface->plan(plan);
-                if (success != moveit::core::MoveItErrorCode::SUCCESS) {
+                auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
+                if (success != true) {
                     finished_msg->kfs_num = current_kfs_num;
                     finished_msg->reason  = "到达放置KFS的位置失败，可能不可达";
                     current_goal_handle->abort(finished_msg);
@@ -816,10 +880,10 @@ void ArmHandleNode::arm_catch_task_handle() {
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
             
             count = 0;
-            while(fraction < 0.995f && count <= MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划：%4f", fraction);
+            while(fraction < 0.995f && count < MAX_COUNT_){
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(放置KFS)，重试 %d/%d, 规划比例: %.3f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                count ++;
+                count++;
             }
             if (fraction < 0.995f)             // 如果轨迹生成失败
             {
@@ -859,10 +923,10 @@ void ArmHandleNode::arm_catch_task_handle() {
             fraction      = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
             
             count = 0;
-            while(fraction < 0.995f && count <= MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划：%4f", fraction);
+            while(fraction < 0.995f && count < MAX_COUNT_){
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(返回轨迹)，重试 %d/%d, 规划比例: %.3f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                count ++;
+                count++;
             }
             if (fraction < 0.995f) // 如果轨迹生成失败
             {
@@ -889,8 +953,14 @@ void ArmHandleNode::arm_catch_task_handle() {
                 move_group_interface->setNamedTarget("idel_pos");
                 // move_group_interface->setMaxAccelerationScalingFactor(0.7);
                 // move_group_interface->setMaxVelocityScalingFactor(0.7);
-                auto success = move_group_interface->plan(plan);
-                if (success != moveit::core::MoveItErrorCode::SUCCESS) {
+                auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
+                if (success != true) {
                     finished_msg->kfs_num = current_kfs_num;
                     finished_msg->reason  = "回到空闲位置失败";
                     current_goal_handle->abort(finished_msg);
