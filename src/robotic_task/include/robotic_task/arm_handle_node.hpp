@@ -1,8 +1,10 @@
 #pragma once
 
 #include "visualization_msgs/msg/marker.hpp"
+#include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/publisher.hpp>
 #include <tf2/LinearMath/Quaternion.h>
@@ -112,6 +114,21 @@ private:
     bool remove_kfs_collision(const std::string &object_id,const std::string &fram_id);
 
     bool set_air_pump(bool enable); // 设置气泵参数
+
+    bool planCartesianPathImproved(
+        const std::vector<geometry_msgs::msg::Pose>& waypoints,
+        moveit_msgs::msg::RobotTrajectory& trajectory,
+        double& achieved_fraction,
+        int max_retries
+    );  // 更好的笛卡尔路径规划实现函数
+
+    bool planLongPathSegmented(
+        const geometry_msgs::msg::Pose& start_pose,
+        const geometry_msgs::msg::Pose& end_pose,
+        moveit_msgs::msg::RobotTrajectory& full_trajectory,
+        double segment_length   // 每段5厘米
+    ); // 分解长路经为多个短路经
+
     ///******************************************************
     // 关节空间 
     //  */
@@ -132,5 +149,7 @@ private:
     ApproachMode mode);
 
     int count ; // 次数可以是任何事情的次数
-    const int MAX_COUNT_ = 100;
+    const int MAX_COUNT_ = 10;
+
+    
 };

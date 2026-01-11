@@ -9,8 +9,10 @@
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
+#include <geometry_msgs/msg/detail/vector3__struct.hpp>
 #include <memory>
 #include <moveit/utils/moveit_error_code.h>
+#include <moveit_msgs/msg/detail/constraints__struct.hpp>
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 // #include <qt5/QtGui/qvalidator.h>
 #include <rclcpp/logging.hpp>
@@ -1266,9 +1268,6 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos_with_orientation(
     return result;
 }
 
-
-
-
 /**
     @brief 根据父坐标系和期望位置，生成一个放置在某个位置的KFS
  */
@@ -1384,5 +1383,126 @@ bool ArmHandleNode::set_air_pump(bool enable){
     }
 }
 
+// bool ArmHandleNode:: planCartesianPathImproved(
+//     const std::vector<geometry_msgs::msg::Pose>& waypoints,
+//     moveit_msgs::msg::RobotTrajectory& trajectory,
+//     double& achieved_fraction,
+//     int max_retries = 10
+// ){
+//     std::vector<double> eef_step_attempts = {0.02, 0.01, 0.005, 0.002};
+//     std::vector<double> jump_threshold_attempts = {0.0, 0.0, 0.0, 0.0};
+//     bool collision_avoidance = true;
+
+//     for (int retry = 0; retry < max_retries; ++retry){
+//         // 自动选择参数
+//         int eef_idx = std::min(retry / 2, (int)eef_step_attempts.size() - 1);
+//         int jump_idx = std::min(retry / 2, (int)jump_threshold_attempts.size() - 1);
+//         int collision_idx = retry % 2;
+
+//         double eef_step = eef_step_attempts[eef_idx];
+//         double jump_threshold = jump_threshold_attempts[jump_idx];
+//         bool avoid_collisions = collision_avoidance;
+
+//         RCLCPP_INFO(node->get_logger(), 
+//             "尝试 %d: eef_step=%.4f, jump_threshold=%.4f, avoid_collisions=%s",
+//                 retry + 1, eef_step, jump_threshold, 
+//                 avoid_collisions ? "true" : "false");
+        
+//         // 执行规划
+//         achieved_fraction = move_group_interface->computeCartesianPath(
+//             waypoints, eef_step, jump_threshold, trajectory,
+//             moveit_msgs::msg::Constraints(),
+//             avoid_collisions
+//         );
+
+//         RCLCPP_INFO(node->get_logger(), "规划完成度 %.6f", achieved_fraction);
+
+//         // 判断是否成功
+//         if(achieved_fraction >= 0.995f){
+//             RCLCPP_INFO(node->get_logger(), "路径规划成功");
+//             return true;
+//         }
+//     }
+
+//     RCLCPP_WARN(node->get_logger(), "所有尝试均未达到满意的规结果");
+//     return false;
+// }
+
+bool ArmHandleNode::planLongPathSegmented(
+    const geometry_msgs::msg::Pose& start_pose ,
+    const geometry_msgs::msg::Pose& end_pose ,
+    moveit_msgs::msg::RobotTrajectory& full_trajectory,
+    double segment_length = 0.05  // 每段 5 厘米
+){
+    // 计算总距离和方向
+    geometry_msgs::msg::Vector3 direction;
+    direction.z = end_pose.position.z - start_pose.position.z;
+    direction.y = end_pose.position.y - start_pose.position.y;
+    direction.x = end_pose.position.x - start_pose.position.x;
+
+    double total_distance = std::sqrt(
+        direction.x * direction.x +
+        direction.y * direction.y +
+        direction.z * direction.z
+    );
+
+    if (total_distance < 0.001){
+        RCLCPP_INFO(node->get_logger(), "起点和终点距离太近，无需规划");
+        return true;
+    }
+
+    // 归一化方向
+    direction.x /= total_distance;
+    direction.y /= total_distance;
+    direction.z /= total_distance;
+
+    // 计算分段数
+    int num_segments = static_cast<int>(std::ceil(total_distance / segment_length));
+
+    std::vector<geometry_msgs::msg::Pose> segment_waypoints;
+    segment_waypoints.push_back(start_pose);
+
+    // 生成分段路径点
+    for(int i = 1; i < num_segments; ++i){
+        double distance = i *  segment_length;
+        geometry_msgs::msg::Pose pose;
+        pose.position.x = start_pose.position.x + direction.x * distance;
+        pose.position.y = start_pose.position.y + direction.y * distance;
+        pose.position.z = start_pose.position.z + direction.z * distance;
+        pose.orientation = start_pose.orientation; // 保持姿态不变
+        segment_waypoints.push_back(pose);
+    }
+    segment_waypoints.push_back(end_pose);
+
+    // 规划并合并轨迹
+    moveit_msgs::msg::RobotTrajectory segment_trajectory;
+
+    double fraction ;
+
+    do {
+        fraction = move_group_interface->computeCartesianPath(
+            segment_waypoints, 0.01, 0.0, segment_trajectory, false
+        );
+    } while (fraction < 0.995f && count <= 10);
+
+    
+    if(fraction < 0.995f){
+        RCLCPP_ERROR(node->get_logger(), "分段规划失败");
+        return false ;
+    } else {
+        RCLCPP_INFO(node->get_logger(), "分段规划成功");
+        return true;
+    }
+
+    // if(!planCartesianPathImproved(segment_waypoints, segment_trajectory, fraction, 10)){
+    //     RCLCPP_ERROR(node->get_logger(), "分段规划失败");
+    //     return false;
+    // }
 
 
+    // 合并轨迹（简化处理，实际可能需要更复杂的合并逻辑）
+    full_trajectory = segment_trajectory;
+    return true;
+}
+
+// double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
