@@ -51,7 +51,7 @@ private:
             // 在 rviz2 中的显示为z轴方向
         goal_msg.target_pose.position.x = 0.0;//0.664748;
             // 在 rviz2 中的显示为y轴方向
-        goal_msg.target_pose.position.y = 0.0;//-0.001824;
+        goal_msg.target_pose.position.y = -0.1;//-0.001824;
             // 在 rviz2 中的显示为x轴方向
         goal_msg.target_pose.position.z = 0.5;//0.256471;
 

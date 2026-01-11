@@ -537,10 +537,16 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             count = 0;
             while(fraction < 0.995f && count < MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.3f", count+1, MAX_COUNT_, fraction);
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
                 count++;
             }
+
+
+            // 分段长路经
+            if(fraction < 0.995f)
+            planLongPathSegmented(prepare_pos, grasp_pose, cart_trajectory, 0.01);
+
 
             // 步骤八：笛卡尔规划失败处理
             if (fraction < 0.995f)             // 如果轨迹生成失败
@@ -883,7 +889,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             
             count = 0;
             while(fraction < 0.995f && count < MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(放置KFS)，重试 %d/%d, 规划比例: %.3f", count+1, MAX_COUNT_, fraction);
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(放置KFS)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
                 count++;
             }
@@ -926,7 +932,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             
             count = 0;
             while(fraction < 0.995f && count < MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(返回轨迹)，重试 %d/%d, 规划比例: %.3f", count+1, MAX_COUNT_, fraction);
+                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(返回轨迹)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
                 count++;
             }
@@ -1478,12 +1484,15 @@ bool ArmHandleNode::planLongPathSegmented(
     moveit_msgs::msg::RobotTrajectory segment_trajectory;
 
     double fraction ;
+    count = 0;
 
     do {
+        ++count;
         fraction = move_group_interface->computeCartesianPath(
             segment_waypoints, 0.01, 0.0, segment_trajectory, false
         );
-    } while (fraction < 0.995f && count <= 10);
+        RCLCPP_WARN(node->get_logger(), "分段规划 %d/%d, 进度%.6f", count, MAX_COUNT_, fraction);
+    } while (fraction < 0.995f && count <= MAX_COUNT_);
 
     
     if(fraction < 0.995f){

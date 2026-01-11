@@ -149,7 +149,7 @@ private:
     ApproachMode mode);
 
     int count ; // 次数可以是任何事情的次数
-    const int MAX_COUNT_ = 10;
+    const int MAX_COUNT_ = 100;
 
     
 };
