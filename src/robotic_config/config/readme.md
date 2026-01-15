@@ -1,6 +1,6 @@
 initial_positions.yaml          配置机械臂初始状态
 
-joint_limits.yaml               配置机械臂关节运动限制
+joint_limits.yaml               配置机械臂关节运动限制(速度，加速度)
 
 kinematics.yaml                 配置运动规划框架中运动学求解器
 

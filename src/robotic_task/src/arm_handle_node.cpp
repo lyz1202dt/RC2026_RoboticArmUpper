@@ -500,17 +500,27 @@ void ArmHandleNode::arm_catch_task_handle() {
             move_group_interface->setMaxAccelerationScalingFactor(0.07);
             move_group_interface->setMaxVelocityScalingFactor(0.1);
 
-            do {
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
-                fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                count++;
-                
-            } while (fraction < 0.995f && count < MAX_COUNT_);
+            fraction = move_group_interface->computeCartesianPath(way_points, 0.0001, 0.0, cart_trajectory, false);
 
-            // 分段长路经
-            if(fraction < 0.995f)
-            planLongPathSegmented(prepare_pos, grasp_pose, cart_trajectory, 0.01);
+            if(fraction < 0.995f){
+                do {
+                    RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
+                    fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+                    count++;
+                    
+                } while (fraction < 0.995f && count < MAX_COUNT_);
 
+                // 分段长路经
+                if(fraction < 0.995f)
+                planLongPathSegmented(prepare_pos, grasp_pose, cart_trajectory, 0.01);
+            
+            } else {
+                // auto smoothed = trajectory_smoother_->applySCurveSmoothing(std::make_shared<robot_trajectory::RobotTrajectory>(
+                //     move_group_interface->getRobotModel(), 
+                //     move_group_interface->getName()
+                // ));
+                RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
+            }
 
             // 步骤八：笛卡尔规划失败处理
             if (fraction < 0.995f)             // 如果轨迹生成失败
@@ -521,13 +531,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 current_goal_handle->abort(finished_msg);
                 RCLCPP_WARN(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
                 continue;
-            } else {
-                // auto smoothed = trajectory_smoother_->applySCurveSmoothing(std::make_shared<robot_trajectory::RobotTrajectory>(
-                //     move_group_interface->getRobotModel(), 
-                //     move_group_interface->getName()
-                // ));
-                RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
-            }
+            } 
 
             // 步骤十：等待气泵稳定并启动
                 // 调用 sleep_for 让线程休眠 2 秒
