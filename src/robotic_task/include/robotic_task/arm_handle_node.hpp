@@ -1,5 +1,8 @@
 #pragma once
 
+#include "SegmentedVelocityController.hpp"
+#include "TragectorySmoother.hpp"
+
 #include "visualization_msgs/msg/marker.hpp"
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <geometry_msgs/msg/pose.hpp>
@@ -30,6 +33,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <vector>
+
 
 typedef enum{
     ROBOTIC_ARM_TASK_MOVE=1,           //移动到某个位姿
@@ -129,6 +133,15 @@ private:
         double segment_length   // 每段5厘米
     ); // 分解长路经为多个短路经
 
+    bool postProcessTrajectory(
+    moveit_msgs::msg::RobotTrajectory& trajectory); // 轨迹后处理：平滑和速度优化
+
+    bool computeCartesianPathOptimized(
+    moveit::planning_interface::MoveGroupInterface& move_group,
+    const std::vector<geometry_msgs::msg::Pose>& waypoints,
+    moveit_msgs::msg::RobotTrajectory& trajectory,
+    double& fraction); // 优化的笛卡尔路径规划函数
+
     ///******************************************************
     // 关节空间 
     //  */
@@ -136,8 +149,8 @@ private:
     const double SWITCH_DISTANCE_THRESHOLD = 0.01;  // 切换距离阈值（米）
     const double CARTESIAN_GOAL_TOLERANCE = 0.001;   // 笛卡尔空间目标容差
     const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差
-    const double VELOCITY_SCALING = 0.5;             // 速度缩放因子
-    const double ACCELERATION_SCALING = 0.5;         // 加速度缩放因子
+    const double VELOCITY_SCALING = 0.4;             // 速度缩放因子
+    const double ACCELERATION_SCALING = 0.3;         // 加速度缩放因子
     // rclcpp::Node::SharedPtr node_;
     // moveit::planning_interface::MoveGroupInterface::SharedPtr move_group_interface; 
     // moveit::planning_interface::PlanningSceneInterface planning_scene_;
@@ -151,5 +164,6 @@ private:
     int count ; // 次数可以是任何事情的次数
     const int MAX_COUNT_ = 100;
 
-    
+    std::shared_ptr<TrajectorySmoother> trajectory_smoother_;
+    std::shared_ptr<SegmentedVelocityController> segmented_velocity_controller_;
 };

@@ -56,6 +56,8 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
             if(!is_running_arm_task)    //如果此时没有进行机械臂抓取，那么立即返回
                 return;
         }
+
+        // Marker 在三维空间中显示不同类型的可视化元素
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = "base_link";
         marker.header.stamp    = this->node->now();
@@ -103,7 +105,6 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
     attached_kfs_pos.position.x    = 0.0;
     attached_kfs_pos.position.y    = 0.0;
     attached_kfs_pos.position.z    = -0.24;
-
 
 
     // 配置基本参数
@@ -317,15 +318,14 @@ void ArmHandleNode::arm_catch_task_handle() {
         if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
         {
             // 容差
-            move_group_interface->setGoalJointTolerance(0.13);
-            move_group_interface->setGoalPositionTolerance(0.06);
-            move_group_interface->setGoalOrientationTolerance(0.2);
-
+            move_group_interface->setGoalJointTolerance(0.01); // 关节容差 0.01 rad
+            move_group_interface->setGoalPositionTolerance(0.005); // 位置容差 5mm
+            move_group_interface->setGoalOrientationTolerance(0.01); // 姿态容差 1度
             // 调用 setPlanningTime 方法设置规划器的最大规划时间为 5.0 秒
-            move_group_interface->setPlanningTime(5.0);
+            move_group_interface->setPlanningTime(10.0);
 
             // 设置采样次数（最多尝试次数）
-            move_group_interface->setNumPlanningAttempts(10);
+            move_group_interface->setNumPlanningAttempts(20);
 
             first_run = false;
         }
@@ -337,18 +337,14 @@ void ArmHandleNode::arm_catch_task_handle() {
         if (current_task_type == ROBOTIC_ARM_TASK_MOVE)           // 要求机械臂移动到某个位姿（因为移动动作在一个周期内完成，所以不再需要执行）
         {
             move_group_interface->setPoseTarget(task_target_pos); // 设置目标
-
-            // 计算轨迹，存入plan并判断规划是否成功
-            // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-            // move_group_interface->setMaxVelocityScalingFactor(0.7);
             
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划当前位置到目标位置的曲线
-            count = 0;
-            while(success == false && count <=  MAX_COUNT_){
-                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
-                count ++ ;
-            }
+            // count = 0;
+            // while(success == false && count <=  MAX_COUNT_){
+            //     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            //     RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+            //     count ++ ;
+            // }
             if (success) {                                                                               // 阻塞函数，发送轨迹
 
                 // 执行规划好的轨迹并将结果保存到ret中
@@ -402,15 +398,13 @@ void ArmHandleNode::arm_catch_task_handle() {
                 move_group_interface->setStartStateToCurrentState();    
                 move_group_interface->setNamedTarget("kfs4_interim_2_pos");
 
-                // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                // move_group_interface->setMaxVelocityScalingFactor(0.7);
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                count = 0;
-                while(success == false && count <=  MAX_COUNT_){
-                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
-                    count ++ ;
-                }
+                // count = 0;
+                // while(success == false && count <=  MAX_COUNT_){
+                //     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                //     RCLCPP_WARN(node->get_logger(), "过渡位置规划失败，重行规划%d次", count+1);
+                //     count ++ ;
+                // }
                 if(success){
                     RCLCPP_INFO(node->get_logger(), "规划到过渡位置成功");
                 } else {
@@ -428,7 +422,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 continue;
 
             //    // ==================== 尝试在规划准备位置之前删除 kfs 的碰撞 ===========================
-            // remove_kfs_collision("target_kfs", move_group_interface->getPlannerId());
+            remove_kfs_collision("target_kfs", move_group_interface->getPlannerId());
 
             //     // ==================== 对规划位置的逆运动学检查 =========================
             // move_group_interface->setPoseTarget(grasp_pose);
@@ -443,8 +437,6 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // 然后将这个准备位置设置为规划目标
             move_group_interface->setPoseTarget(prepare_pos);            // 设置目标
                 // plan 函数进行运动规划
-            // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-            // move_group_interface->setMaxVelocityScalingFactor(0.7);
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
             count = 0;
             while(success == false && count <=  MAX_COUNT_){
@@ -501,47 +493,19 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // ============================================================================================
 
-            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
-            // RCLCPP_INFO(node->get_logger(), "Debug-2");
-
-            // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
-            // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
-            const double slow_down_factor = 10.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
-            if (slow_down_factor > 1.0) {
-                RCLCPP_INFO(node->get_logger(), "放慢笛卡尔轨迹: slow_down_factor=%.2f", slow_down_factor);
-                for (auto &point : cart_trajectory.joint_trajectory.points) {
-                    // joint_trajectory.points 存储的是一系列带有时间戳的路径点序列，每个点包含该时刻的关节位置、速度和加速度信息。
-                    // 缩放 time_from_start
-                    /*
-                    首先将 sec（秒）和 nanosec（纳秒）合并成一个双精度浮点数 t，这样便于数学运算；
-                    然后将 t 乘以 slow_down_factor 进行缩放；最后再将结果拆分回秒和纳秒两部分存回原结构体。
-                    */
-                    double t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9;
-                    t *= slow_down_factor;
-                    int32_t sec = static_cast<int32_t>(std::floor(t));
-                    uint32_t nsec = static_cast<uint32_t>((t - std::floor(t)) * 1e9);
-                    point.time_from_start.sec = sec;
-                    point.time_from_start.nanosec = nsec;
-
-                    // 缩放速度和加速度（若存在）以匹配更长的执行时间
-                    if (!point.velocities.empty()) {
-                        for (auto &v : point.velocities)
-                            v = static_cast<double>(v) / slow_down_factor;
-                    }
-                    if (!point.accelerations.empty()) {
-                        for (auto &a : point.accelerations)
-                            a = static_cast<double>(a) / slow_down_factor;
-                    }
-                }
-            }
-
+            double fraction = 0.0; // move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
             count = 0;
-            while(fraction < 0.995f && count < MAX_COUNT_){
+
+            // RCLCPP_INFO(node->get_logger(), "Debug-2");
+            move_group_interface->setMaxAccelerationScalingFactor(0.07);
+            move_group_interface->setMaxVelocityScalingFactor(0.1);
+
+            do {
                 RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
                 fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
                 count++;
-            }
-
+                
+            } while (fraction < 0.995f && count < MAX_COUNT_);
 
             // 分段长路经
             if(fraction < 0.995f)
@@ -558,6 +522,10 @@ void ArmHandleNode::arm_catch_task_handle() {
                 RCLCPP_WARN(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
                 continue;
             } else {
+                // auto smoothed = trajectory_smoother_->applySCurveSmoothing(std::make_shared<robot_trajectory::RobotTrajectory>(
+                //     move_group_interface->getRobotModel(), 
+                //     move_group_interface->getName()
+                // ));
                 RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
             }
 
@@ -577,13 +545,54 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 步骤九：执行笛卡尔路径并发布反馈
             // RCLCPP_INFO(node->get_logger(), "Debug-3");
 
+            // // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
+            // // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
+            // const double slow_down_factor = 3.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
+            // if (slow_down_factor > 1.0) {
+            //     RCLCPP_INFO(node->get_logger(), "放慢笛卡尔轨迹: slow_down_factor=%.2f", slow_down_factor);
+            //     for (auto &point : cart_trajectory.joint_trajectory.points) {
+            //         // joint_trajectory.points 存储的是一系列带有时间戳的路径点序列，每个点包含该时刻的关节位置、速度和加速度信息。
+            //         // 缩放 time_from_start
+            //         /*
+            //         首先将 sec（秒）和 nanosec（纳秒）合并成一个双精度浮点数 t，这样便于数学运算；
+            //         然后将 t 乘以 slow_down_factor 进行缩放；最后再将结果拆分回秒和纳秒两部分存回原结构体。
+            //         */
+            //         double t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9;
+            //         t *= slow_down_factor;
+            //         int32_t sec = static_cast<int32_t>(std::floor(t));
+            //         uint32_t nsec = static_cast<uint32_t>((t - std::floor(t)) * 1e9);
+            //         point.time_from_start.sec = sec;
+            //         point.time_from_start.nanosec = nsec;
+
+            //         // 缩放速度和加速度（若存在）以匹配更长的执行时间
+            //         if (!point.velocities.empty()) {
+            //             for (auto &v : point.velocities)
+            //                 v = static_cast<double>(v) / slow_down_factor;
+            //         }
+            //         if (!point.accelerations.empty()) {
+            //             for (auto &a : point.accelerations)
+            //                 a = static_cast<double>(a) / slow_down_factor;
+            //         }
+            //     }
+            // }
+
+            // 在 execute 之前添加时间记录
+            auto start_time = std::chrono::high_resolution_clock::now();
             move_group_interface->execute(cart_trajectory);
+            // 记录结束时间
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+            RCLCPP_INFO(node->get_logger(), "笛卡尔路径执行完成，实际耗时: %ld 毫秒", duration.count());
+
+
 
             RCLCPP_INFO(node->get_logger(), "执行从准备位置到抓取位置的笛卡尔路径");
             feedback_msg->current_state  = 2;
             feedback_msg->state_describe = "机械臂到达吸取位置";
             current_goal_handle->publish_feedback(feedback_msg);
 
+            move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
+            move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
             // RCLCPP_INFO(node->get_logger(), "Debug-4");
             // 步骤十：等待气泵稳定
                 // 调用 sleep_for 让线程休眠 2 秒
@@ -625,8 +634,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             do {
                 // 调用 setStartStateToCurrentState 将规划起点设置为机械臂当前位置
                 move_group_interface->setStartStateToCurrentState();
-                // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                // move_group_interface->setMaxVelocityScalingFactor(0.7);
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 count = 0;
                 while(success == false && count <=  MAX_COUNT_){
@@ -705,8 +712,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // setStartStateToCurrentState 将规划的起始状态设置为当前实时状态
                 move_group_interface->setStartStateToCurrentState();
                 move_group_interface->setNamedTarget("idel_pos");
-                // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                // move_group_interface->setMaxVelocityScalingFactor(0.7);
+
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 count = 0;
                 while(success == false && count <=  MAX_COUNT_){
@@ -759,8 +765,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 move_group_interface->setNamedTarget(name_tag + "_detach_pos"); // 到达准备吸取KFS的位置
 
             // 四、规划到准备吸取位置
-                // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                // move_group_interface->setMaxVelocityScalingFactor(0.7);
+
                 do{
                     auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                     count = 0;
@@ -789,8 +794,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 do {
                     move_group_interface->setStartStateToCurrentState();
                     move_group_interface->setNamedTarget(name_tag + "_touch_pos"); // 到达吸取KFS的位置
-                    // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                    // move_group_interface->setMaxVelocityScalingFactor(0.7);
+
                     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                     count = 0;
                     while(success == false && count <=  MAX_COUNT_){
@@ -846,8 +850,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             do {
                 move_group_interface->setStartStateToCurrentState();
                 move_group_interface->setPoseTarget(task_target_pos); // 放置任务——要放置的坐标
-                // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                // move_group_interface->setMaxVelocityScalingFactor(0.7);
+
                 auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 count = 0;
                 while(success == false && count <=  MAX_COUNT_){
@@ -883,8 +886,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // 笛卡尔路径规划
             moveit_msgs::msg::RobotTrajectory cart_trajectory;
-            // move_group_interface->setMaxAccelerationScalingFactor(0.1);
-            // move_group_interface->setMaxVelocityScalingFactor(0.1);
+
             double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
             
             count = 0;
@@ -925,9 +927,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             temp          = way_points[0];
             way_points[0] = way_points[1];
             way_points[1] = temp;  // 交换起点和终点
-
-            // move_group_interface->setMaxAccelerationScalingFactor(0.1);
-            // move_group_interface->setMaxVelocityScalingFactor(0.1);
             fraction      = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
             
             count = 0;
@@ -959,8 +958,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             do {
                 move_group_interface->setStartStateToCurrentState();
                 move_group_interface->setNamedTarget("idel_pos");
-                // move_group_interface->setMaxAccelerationScalingFactor(0.7);
-                // move_group_interface->setMaxVelocityScalingFactor(0.7);
                 auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 count = 0;
                 while(success == false && count <=  MAX_COUNT_){
@@ -1514,4 +1511,96 @@ bool ArmHandleNode::planLongPathSegmented(
     return true;
 }
 
-// double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
+// 优化的笛卡尔路径规划函数
+bool ArmHandleNode::computeCartesianPathOptimized(
+    moveit::planning_interface::MoveGroupInterface& move_group,
+    const std::vector<geometry_msgs::msg::Pose>& waypoints,
+    moveit_msgs::msg::RobotTrajectory& trajectory,
+    double& fraction) {
+    
+    // 使用更小的步长进行初始规划
+    double eef_step = 0.005;  // 5mm 步长
+    double jump_threshold = 0.0;
+    
+    // 第一次尝试
+    fraction = move_group.computeCartesianPath(waypoints, eef_step, 
+        jump_threshold, trajectory, false);
+    
+    if (fraction >= 0.995) {
+        // 规划成功，进行后处理
+        return postProcessTrajectory(trajectory);
+    }
+    
+    // 如果第一次失败，尝试减小步长
+    std::vector<double> step_sizes = {0.002, 0.001};
+    
+    for (double step : step_sizes) {
+        fraction = move_group.computeCartesianPath(waypoints, step,
+            jump_threshold, trajectory, false);
+        
+        if (fraction >= 0.995) {
+            return postProcessTrajectory(trajectory);
+        }
+    }
+    
+    // 如果仍然失败，返回原始轨迹
+    return false;
+}
+
+// 轨迹后处理：平滑和速度优化
+bool ArmHandleNode::postProcessTrajectory(
+    moveit_msgs::msg::RobotTrajectory& trajectory) {
+    
+    if (trajectory.joint_trajectory.points.empty()) {
+        return false;
+    }
+    
+    // 1. 对轨迹点进行插值，增加轨迹点密度
+    std::vector<double> time_stamps;
+    for (const auto& point : trajectory.joint_trajectory.points) {
+        double t = point.time_from_start.sec + 
+            point.time_from_start.nanosec * 1e-9;
+        time_stamps.push_back(t);
+    }
+    
+    // 插值到更密的时间点
+    std::vector<double> new_time_stamps;
+    double min_dt = 0.01;  // 10ms 间隔
+    double max_time = time_stamps.back();
+    
+    for (double t = 0; t <= max_time; t += min_dt) {
+        new_time_stamps.push_back(t);
+    }
+    
+    // 2. 应用速度限制
+    double max_velocity = 0.5;  // 弧度/秒
+    double max_acceleration = 0.3;  // 弧度/秒²
+    
+    for (size_t i = 1; i < trajectory.joint_trajectory.points.size(); ++i) {
+        auto& point = trajectory.joint_trajectory.points[i];
+        auto& prev_point = trajectory.joint_trajectory.points[i-1];
+        
+        double dt = (point.time_from_start.sec - prev_point.time_from_start.sec) +
+            (point.time_from_start.nanosec - prev_point.time_from_start.nanosec) * 1e-9;
+        
+        if (dt > 1e-6) {
+            for (size_t j = 0; j < point.velocities.size(); ++j) {
+                double velocity = point.velocities[j];
+                double limited_velocity = std::copysign(
+                    std::min(std::abs(velocity), max_velocity), velocity);
+                point.velocities[j] = limited_velocity;
+                
+                // 限制加速度
+                double accel = (velocity - prev_point.velocities[j]) / dt;
+                double limited_accel = std::copysign(
+                    std::min(std::abs(accel), max_acceleration), accel);
+                
+                // 重新计算速度以符合加速度限制
+                point.velocities[j] = prev_point.velocities[j] + 
+                    limited_accel * dt;
+            }
+        }
+    }
+    
+    return true;
+}

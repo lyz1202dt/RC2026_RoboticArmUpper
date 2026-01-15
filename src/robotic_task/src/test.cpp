@@ -51,7 +51,7 @@ private:
             // 在 rviz2 中的显示为z轴方向
         goal_msg.target_pose.position.x = 0.0;//0.664748;
             // 在 rviz2 中的显示为y轴方向
-        goal_msg.target_pose.position.y = -0.1;//-0.001824;
+        goal_msg.target_pose.position.y = 0.0;//-0.001824;
             // 在 rviz2 中的显示为x轴方向
         goal_msg.target_pose.position.z = 0.5;//0.256471;
 
@@ -60,6 +60,7 @@ private:
         goal_msg.target_pose.orientation.y = 0.0; // -0.004257;
         goal_msg.target_pose.orientation.z = 0.0; // -0.705862;
 
+        
 
         // action 类型为 “移动”
         // goal_msg.action_type =  1;
