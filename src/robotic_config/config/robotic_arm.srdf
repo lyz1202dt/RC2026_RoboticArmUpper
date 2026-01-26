@@ -28,11 +28,11 @@
     </group_state>
     <group_state name="kfs1_detach_pos" group="robotic_arm">
         <joint name="joint1" value="0"/>
-        <joint name="joint2" value="-0.139626338"/>
-        <joint name="joint3" value="-1.675516053"/>
-        <joint name="joint4" value=" -1.605702884"/>
+        <joint name="joint2" value="-0.436332313"/>
+        <joint name="joint3" value="-1.884955592"/>
+        <joint name="joint4" value="-1.691597748"/>
         <joint name="joint5" value="0"/>
-        <joint name="joint6" value="3.1416"/>
+        <joint name="joint6" value="3.141592654"/>
     </group_state>
     <group_state name="kfs1_touch_pos" group="robotic_arm">
         <joint name="joint1" value="0"/>
@@ -92,8 +92,8 @@
     </group_state>
     <group_state name="start_pos_2" group="robotic_arm">
         <joint name="joint1" value="0.000000000"/>
-        <joint name="joint2" value="0.994837674 "/>
-        <joint name="joint3" value="1.989675347 "/>
+        <joint name="joint2" value="0.750491578 "/>
+        <joint name="joint3" value="1.500983157 "/>
         <joint name="joint4" value="1.570796327"/>
         <joint name="joint5" value="0.000000000"/>
         <joint name="joint6" value="0.000000000"/>

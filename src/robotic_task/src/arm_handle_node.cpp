@@ -287,42 +287,25 @@ void ArmHandleNode::arm_catch_task_handle() {
     }
 
     do {
-                // setStartStateToCurrentState 将规划的起始状态设置为当前实时状态
-                move_group_interface->setStartStateToCurrentState();
-                move_group_interface->setNamedTarget("start_pos_1");
+        // setStartStateToCurrentState 将规划的起始状态设置为当前实时状态
+        move_group_interface->setStartStateToCurrentState();
+        move_group_interface->setNamedTarget("start_pos_2");
 
-                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                count = 0;
-                while(success == false && count <=  MAX_COUNT_){
-                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                    RCLCPP_WARN(node->get_logger(), "起始位置规划失败，重行规划%d次", count+1);
-                    count ++ ;
-                }
-                if (!success) {
-                    finished_msg->kfs_num = current_kfs_num;
-                    finished_msg->reason  = "机械臂无法回到起始位置，路径规划失败";
-                    current_goal_handle->abort(finished_msg);
-                    continue_flag = true;
-                    break;
-                } 
-            } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+        count = 0;
+        while(success == false && count <=  MAX_COUNT_){
+            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            RCLCPP_WARN(node->get_logger(), "起始位置规划失败，重行规划%d次", count+1);
+            count ++ ;
+        }
+        if (!success) {
+            finished_msg->kfs_num = current_kfs_num;
+            finished_msg->reason  = "机械臂无法回到起始位置，路径规划失败";
+            current_goal_handle->abort(finished_msg);
+            continue_flag = true;
+            break;
+        } 
+    } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
 
     RCLCPP_INFO(node->get_logger(), "机械臂任务处理线程启动完成，等待任务请求");
 
@@ -473,6 +456,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             
 
                 // 然后将这个准备位置设置为规划目标
+            move_group_interface->setStartStateToCurrentState();
             move_group_interface->setPoseTarget(prepare_pos);            // 设置目标
                 // plan 函数进行运动规划
             success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划从当前位置到目标位置的曲线
@@ -512,126 +496,178 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // getPlanningFrame 获取运动规划器的id
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
             // RCLCPP_INFO(node->get_logger(), "Debug-1");
-            // 步骤六：设置笛卡尔路径点（从准备位姿沿表面法向量直线接近）
-                // 创建包含准备位姿和抓取位姿的路点数组 way_points
-            std::vector<geometry_msgs::msg::Pose> way_points;
-            way_points.resize(2);
-            way_points[0] = prepare_pos; // 准备位姿（在表面外侧）grasp_pose
-            way_points[1] = grasp_pose;  // 抓取位姿（贴合表面）prepare_pos
 
-            // 步骤七：笛卡尔路径规划
-                // RobotTrajectory 消息用于存储计算出的笛卡尔路径
-            moveit_msgs::msg::RobotTrajectory cart_trajectory;
-                // 调用 computeCartesianPath 函数进行笛卡尔路径规划，该函数会计算从当前位姿沿着直线移动到目标路点的轨迹
-                /*
-                参数说明：第一个参数是路点数组，第二个参数 0.01 是路点之间的最大距离（单位：米），
-                第三个参数 0.0 是跳转阈值，第四个参数存储计算出的轨迹，
-                第五个参数 false 表示不使用参考框架。函数返回规划成功的比例（0.0 到 1.0），1.0 表示完全成功。
-                */
-
-            // ============================================================================================
-
-            double fraction = 0.0; // move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
             count = 0;
+            move_group_interface->setMaxVelocityScalingFactor(0.05);
+            move_group_interface->setMaxAccelerationScalingFactor(0.025);
+            move_group_interface->setStartStateToCurrentState();
+            move_group_interface->setPoseTarget(grasp_pose);
+            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
 
-            // RCLCPP_INFO(node->get_logger(), "Debug-2");
-            move_group_interface->setMaxAccelerationScalingFactor(0.07);
-            move_group_interface->setMaxVelocityScalingFactor(0.1);
-
-            fraction = move_group_interface->computeCartesianPath(way_points, 0.0001, 0.0, cart_trajectory, false);
-
-            if(fraction < 0.995f){
-                do {
-                    RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
-                    fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                    count++;
-                    
-                } while (fraction < 0.995f && count < MAX_COUNT_);
-
-                // 分段长路经
-                if(fraction < 0.995f)
-                planLongPathSegmented(prepare_pos, grasp_pose, cart_trajectory, 0.01);
-            
+            while(success == false && count <= MAX_COUNT_){
+                    ++count;
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重新规划%d次", count);
+            }
+            if(success){
+                RCLCPP_INFO(node->get_logger(), "抓取过程规划成功");
             } else {
-                // auto smoothed = trajectory_smoother_->applySCurveSmoothing(std::make_shared<robot_trajectory::RobotTrajectory>(
-                //     move_group_interface->getRobotModel(), 
-                //     move_group_interface->getName()
-                // ));
-                RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
+                RCLCPP_INFO(node->get_logger(), "抓取过程规划失败");
             }
 
-            // 步骤八：笛卡尔规划失败处理
-            if (fraction < 0.995f)             // 如果轨迹生成失败
-            {
+            if (!success) {
                 finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
-                // 调用 abort 终止目标
+                finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达(ROBOTIC_ARM_TASK_CATCH_TARGET)";
+                // 调用 abort 方法终止当前 Action 目标
                 current_goal_handle->abort(finished_msg);
-                RCLCPP_WARN(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
+                // 在抓取前删除KFS防止因碰撞检测无法连接
+                remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   
                 continue;
-            } 
-
-            // 步骤十：等待气泵稳定并启动
-                // 调用 sleep_for 让线程休眠 2 秒
-            std::this_thread::sleep_for(2s);
-            
-            // 启动气泵
-            std::vector<std::string> node_names = node->get_node_names();
-            if(std::find(node_names.begin(), node_names.end(), "/driver_node") != node_names.end()){
-                set_air_pump(true);
-                RCLCPP_INFO(node->get_logger(), "启动气泵成功");
-            } else {
-                RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
             }
 
-            // 步骤九：执行笛卡尔路径并发布反馈
-            // RCLCPP_INFO(node->get_logger(), "Debug-3");
 
-            // // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
-            // // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
-            // const double slow_down_factor = 3.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
-            // if (slow_down_factor > 1.0) {
-            //     RCLCPP_INFO(node->get_logger(), "放慢笛卡尔轨迹: slow_down_factor=%.2f", slow_down_factor);
-            //     for (auto &point : cart_trajectory.joint_trajectory.points) {
-            //         // joint_trajectory.points 存储的是一系列带有时间戳的路径点序列，每个点包含该时刻的关节位置、速度和加速度信息。
-            //         // 缩放 time_from_start
-            //         /*
-            //         首先将 sec（秒）和 nanosec（纳秒）合并成一个双精度浮点数 t，这样便于数学运算；
-            //         然后将 t 乘以 slow_down_factor 进行缩放；最后再将结果拆分回秒和纳秒两部分存回原结构体。
-            //         */
-            //         double t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9;
-            //         t *= slow_down_factor;
-            //         int32_t sec = static_cast<int32_t>(std::floor(t));
-            //         uint32_t nsec = static_cast<uint32_t>((t - std::floor(t)) * 1e9);
-            //         point.time_from_start.sec = sec;
-            //         point.time_from_start.nanosec = nsec;
+            move_group_interface->execute(plan);
+            RCLCPP_INFO(node->get_logger(), "执行抓取");
+            move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
+            move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
 
-            //         // 缩放速度和加速度（若存在）以匹配更长的执行时间
-            //         if (!point.velocities.empty()) {
-            //             for (auto &v : point.velocities)
-            //                 v = static_cast<double>(v) / slow_down_factor;
-            //         }
-            //         if (!point.accelerations.empty()) {
-            //             for (auto &a : point.accelerations)
-            //                 a = static_cast<double>(a) / slow_down_factor;
-            //         }
-            //     }
+
+
+
+
+
+
+
+            // // 步骤六：设置笛卡尔路径点（从准备位姿沿表面法向量直线接近）
+            //     // 创建包含准备位姿和抓取位姿的路点数组 way_points
+            // std::vector<geometry_msgs::msg::Pose> way_points;
+            // way_points.resize(2);
+            // way_points[0] = prepare_pos; // 准备位姿（在表面外侧）grasp_pose
+            // way_points[1] = grasp_pose;  // 抓取位姿（贴合表面）prepare_pos
+
+            // // 步骤七：笛卡尔路径规划
+            //     // RobotTrajectory 消息用于存储计算出的笛卡尔路径
+            // moveit_msgs::msg::RobotTrajectory cart_trajectory;
+            //     // 调用 computeCartesianPath 函数进行笛卡尔路径规划，该函数会计算从当前位姿沿着直线移动到目标路点的轨迹
+            //     /*
+            //     参数说明：第一个参数是路点数组，第二个参数 0.01 是路点之间的最大距离（单位：米），
+            //     第三个参数 0.0 是跳转阈值，第四个参数存储计算出的轨迹，
+            //     第五个参数 false 表示不使用参考框架。函数返回规划成功的比例（0.0 到 1.0），1.0 表示完全成功。
+            //     */
+
+            // // ============================================================================================
+
+            // double fraction = 0.0; // move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
+            // count = 0;
+
+            // // RCLCPP_INFO(node->get_logger(), "Debug-2");
+            // move_group_interface->setMaxAccelerationScalingFactor(0.07);
+            // move_group_interface->setMaxVelocityScalingFactor(0.1);
+
+            // fraction = move_group_interface->computeCartesianPath(way_points, 0.0001, 0.0, cart_trajectory, false);
+
+            // if(fraction < 0.995f){
+            //     do {
+            //         RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(准备位置->抓取位置)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
+            //         fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            //         count++;
+                    
+            //     } while (fraction < 0.995f && count < MAX_COUNT_);
+
+            //     // 分段长路经
+            //     if(fraction < 0.995f)
+            //     planLongPathSegmented(prepare_pos, grasp_pose, cart_trajectory, 0.01);
+            
+            // } else {
+            //     // auto smoothed = trajectory_smoother_->applySCurveSmoothing(std::make_shared<robot_trajectory::RobotTrajectory>(
+            //     //     move_group_interface->getRobotModel(), 
+            //     //     move_group_interface->getName()
+            //     // ));
+            //     RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
             // }
 
-            // 在 execute 之前添加时间记录
-            auto start_time = std::chrono::high_resolution_clock::now();
-            move_group_interface->execute(cart_trajectory);
-            // 记录结束时间
-            auto end_time = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-            RCLCPP_INFO(node->get_logger(), "笛卡尔路径执行完成，实际耗时: %ld 毫秒", duration.count());
+            // // 步骤八：笛卡尔规划失败处理
+            // if (fraction < 0.995f)             // 如果轨迹生成失败
+            // {
+            //     finished_msg->kfs_num = current_kfs_num;
+            //     finished_msg->reason  = "抓取时机械臂超出工作范围，抓取失败";
+            //     // 调用 abort 终止目标
+            //     current_goal_handle->abort(finished_msg);
+            //     RCLCPP_WARN(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划失败");
+            //     continue;
+            // } 
+
+            // // 步骤十：等待气泵稳定并启动
+            //     // 调用 sleep_for 让线程休眠 2 秒
+            // std::this_thread::sleep_for(2s);
+            
+            // // 启动气泵
+            std::vector<std::string> node_names = node->get_node_names();
+            // if(std::find(node_names.begin(), node_names.end(), "/driver_node") != node_names.end()){
+            //     set_air_pump(true);
+            //     RCLCPP_INFO(node->get_logger(), "启动气泵成功");
+            // } else {
+            //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
+            // }
+
+            // // 步骤九：执行笛卡尔路径并发布反馈
+            // // RCLCPP_INFO(node->get_logger(), "Debug-3");
+
+            // // // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
+            // // // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
+            // // const double slow_down_factor = 3.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
+            // // if (slow_down_factor > 1.0) {
+            // //     RCLCPP_INFO(node->get_logger(), "放慢笛卡尔轨迹: slow_down_factor=%.2f", slow_down_factor);
+            // //     for (auto &point : cart_trajectory.joint_trajectory.points) {
+            // //         // joint_trajectory.points 存储的是一系列带有时间戳的路径点序列，每个点包含该时刻的关节位置、速度和加速度信息。
+            // //         // 缩放 time_from_start
+            // //         /*
+            // //         首先将 sec（秒）和 nanosec（纳秒）合并成一个双精度浮点数 t，这样便于数学运算；
+            // //         然后将 t 乘以 slow_down_factor 进行缩放；最后再将结果拆分回秒和纳秒两部分存回原结构体。
+            // //         */
+            // //         double t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9;
+            // //         t *= slow_down_factor;
+            // //         int32_t sec = static_cast<int32_t>(std::floor(t));
+            // //         uint32_t nsec = static_cast<uint32_t>((t - std::floor(t)) * 1e9);
+            // //         point.time_from_start.sec = sec;
+            // //         point.time_from_start.nanosec = nsec;
+
+            // //         // 缩放速度和加速度（若存在）以匹配更长的执行时间
+            // //         if (!point.velocities.empty()) {
+            // //             for (auto &v : point.velocities)
+            // //                 v = static_cast<double>(v) / slow_down_factor;
+            // //         }
+            // //         if (!point.accelerations.empty()) {
+            // //             for (auto &a : point.accelerations)
+            // //                 a = static_cast<double>(a) / slow_down_factor;
+            // //         }
+            // //     }
+            // // }
+
+            // // 在 execute 之前添加时间记录
+            // auto start_time = std::chrono::high_resolution_clock::now();
+            // move_group_interface->execute(cart_trajectory);
+            // // 记录结束时间
+            // auto end_time = std::chrono::high_resolution_clock::now();
+            // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+            // RCLCPP_INFO(node->get_logger(), "笛卡尔路径执行完成，实际耗时: %ld 毫秒", duration.count());
 
 
 
-            RCLCPP_INFO(node->get_logger(), "执行从准备位置到抓取位置的笛卡尔路径");
-            feedback_msg->current_state  = 2;
-            feedback_msg->state_describe = "机械臂到达吸取位置";
-            current_goal_handle->publish_feedback(feedback_msg);
+            // RCLCPP_INFO(node->get_logger(), "执行从准备位置到抓取位置的笛卡尔路径");
+            // feedback_msg->current_state  = 2;
+            // feedback_msg->state_describe = "机械臂到达吸取位置";
+            // current_goal_handle->publish_feedback(feedback_msg);
+
+
+
+
+
+
+
+
+
+
 
             move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
             move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
@@ -1473,11 +1509,14 @@ bool ArmHandleNode::set_air_pump(bool enable){
 //     return false;
 // }
 
+
+
+
 bool ArmHandleNode::planLongPathSegmented(
     const geometry_msgs::msg::Pose& start_pose ,
     const geometry_msgs::msg::Pose& end_pose ,
     moveit_msgs::msg::RobotTrajectory& full_trajectory,
-    double segment_length = 0.05  // 每段 5 厘米
+    double segment_length = 0.01  // 每段 1 厘米
 ){
     // 计算总距离和方向
     geometry_msgs::msg::Vector3 direction;
@@ -1502,7 +1541,7 @@ bool ArmHandleNode::planLongPathSegmented(
     direction.z /= total_distance;
 
     // 计算分段数
-    int num_segments = static_cast<int>(std::ceil(total_distance / segment_length));
+    int num_segments = static_cast<int>(std::ceil(total_distance / segment_length));  // std::ceil 向上取整
 
     std::vector<geometry_msgs::msg::Pose> segment_waypoints;
     segment_waypoints.push_back(start_pose);
