@@ -1,3 +1,7 @@
+/*
+实现控制器与电机硬件之间的连接通信
+*/
+
 #include "hardware_interface/system_interface.hpp" // 硬件接口基类
 #include "pluginlib/class_list_macros.hpp"  // 插件库宏
 

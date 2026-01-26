@@ -286,6 +286,44 @@ void ArmHandleNode::arm_catch_task_handle() {
         psi->applyCollisionObject(collision_object);                                     // 应用障碍物
     }
 
+    do {
+                // setStartStateToCurrentState 将规划的起始状态设置为当前实时状态
+                move_group_interface->setStartStateToCurrentState();
+                move_group_interface->setNamedTarget("start_pos_1");
+
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "起始位置规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
+                if (!success) {
+                    finished_msg->kfs_num = current_kfs_num;
+                    finished_msg->reason  = "机械臂无法回到起始位置，路径规划失败";
+                    current_goal_handle->abort(finished_msg);
+                    continue_flag = true;
+                    break;
+                } 
+            } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     RCLCPP_INFO(node->get_logger(), "机械臂任务处理线程启动完成，等待任务请求");
 
     while (rclcpp::ok()) {
