@@ -92,9 +92,9 @@
     </group_state>
     <group_state name="start_pos_2" group="robotic_arm">
         <joint name="joint1" value="0.000000000"/>
-        <joint name="joint2" value="0.750491578 "/>
-        <joint name="joint3" value="1.500983157 "/>
-        <joint name="joint4" value="1.570796327"/>
+        <joint name="joint2" value="0.8726646259971648"/>
+        <joint name="joint3" value="2.1816615649929116"/>
+        <joint name="joint4" value="2.2514747350725445"/>
         <joint name="joint5" value="0.000000000"/>
         <joint name="joint6" value="0.000000000"/>
     </group_state>
