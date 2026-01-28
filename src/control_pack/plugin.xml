@@ -1,0 +1,11 @@
+<!-- 硬件接口插件描述文件 -->
+
+<!-- 库声明 -->
+<library path="mycontrol">
+  <!-- 类声明 -->
+  <class
+    name="mycontrol/MyControl"
+    type="mycontrol::MyControl"
+    base_class_type="hardware_interface::SystemInterface"
+    description="My ros2_control hardware interface"/>
+</library>

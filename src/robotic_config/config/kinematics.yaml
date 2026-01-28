@@ -1,0 +1,5 @@
+robotic_arm:
+  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+  kinematics_solver_search_resolution: 0.0050000000000000001 # 步长
+  kinematics_solver_timeout: 0.0050000000000000001 # 等待时间
+  kinematics_solver_attempts: 10 # 最大求解次数

@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>control_pack</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+  <maintainer email="cloud1202@qq.com">lyz</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rclcpp_action</build_depend>
+  <build_depend>controller_interface</build_depend>
+  <build_depend>hardware_interface</build_depend>
+  <build_depend>pluginlib</build_depend>
+  <build_depend>trajectory_msgs</build_depend>
+  <build_depend>control_msgs</build_depend>
+  <build_depend>builtin_interfaces</build_depend>
+  <build_depend>rclcpp_lifecycle</build_depend>
+  <build_depend>kdl_parser</build_depend>
+  <build_depend>orocos_kdl</build_depend>
+  <build_depend>robot_interfaces</build_depend>
+
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>rclcpp_action</exec_depend>
+  <exec_depend>controller_interface</exec_depend>
+  <exec_depend>hardware_interface</exec_depend>
+  <exec_depend>pluginlib</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>rclcpp_lifecycle</exec_depend>
+  <exec_depend>kdl_parser</exec_depend>
+  <exec_depend>orocos_kdl</exec_depend>
+  <exec_depend>ament_lint_auto</exec_depend>
+  <exec_depend>ament_lint_common</exec_depend>
+  <exec_depend>robot_interfaces</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
