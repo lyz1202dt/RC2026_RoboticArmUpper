@@ -1,30 +1,118 @@
 #pragma once
 
+// ========= 项目内部头文件 =========
+// 分段速度控制器
+// - 通常用于将整条运动划分为多个 segment
+// - 每段可使用不同的速度规划或控制策略
 #include "SegmentedVelocityController.hpp"
+
+// 轨迹平滑器
+// - 对离散轨迹进行平滑（速度 / 加速度连续）
+// - 常见实现：五次多项式、滤波、时间重分配等
 #include "TragectorySmoother.hpp"
 
+// ========= ROS 可视化相关 =========
+
+// RViz 可视化 Marker
+// - 用于发布调试用的可视化信息（点、线、坐标轴等）
 #include "visualization_msgs/msg/marker.hpp"
+
+// ========= geometry_msgs（位姿与几何数据） =========
+
+// Pose 的底层结构定义（一般不需要直接用，但某些模板或内部接口会依赖）
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
+
+// 位姿（位置 + 四元数姿态）
+// - 机器人末端位姿
+// - 目标抓取位姿
 #include <geometry_msgs/msg/pose.hpp>
+
+// 带时间戳和坐标系的变换
+// - TF 广播或监听用
 #include <geometry_msgs/msg/transform_stamped.hpp>
+
+// ========= MoveIt 轨迹与规划 =========
+
+// MoveIt 生成的机器人轨迹结构
+// - 包含 joint_trajectory / multi_dof_trajectory
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
+
+// ========= ROS2 基础设施 =========
+
+// 参数客户端
+// - 用于动态读取其他节点的参数
 #include <rclcpp/parameter_client.hpp>
+
+// ROS2 发布器接口
 #include <rclcpp/publisher.hpp>
+
+// ========= TF2（坐标变换） =========
+
+// 四元数数学工具
+// - roll/pitch/yaw 与 quaternion 转换
 #include <tf2/LinearMath/Quaternion.h>
+
+// TF 缓存
+// - 存储并查询坐标变换树
 #include <tf2_ros/buffer.h>
+
+// TF 监听器
+// - 从 /tf 和 /tf_static 接收变换
 #include <tf2_ros/transform_listener.hpp>
+
+// TF2 与 geometry_msgs 的转换工具
+// - tf2::Transform <-> geometry_msgs
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
+
 #include <geometry_msgs/msg/pose.hpp>
+
+// ========= 自定义接口 =========
+
+// 自定义机械臂消息
+// - 通常用于发布机械臂状态或控制命令
 #include <robot_interfaces/msg/arm.hpp>
+
+// ========= MoveIt 高层接口 =========
+
+// MoveGroupInterface
+// - MoveIt 最常用的 C++ 接口
+// - 负责规划、执行、设置目标
 #include <moveit/move_group_interface/move_group_interface.h>
+
+// PlanningSceneInterface
+// - 管理场景中的障碍物
+// - 动态添加 / 删除碰撞物体
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
+
+// 碰撞物体定义
 #include <moveit_msgs/msg/collision_object.h>
+
+// MoveIt 错误码
+// - 判断规划或执行是否成功
 #include <moveit/utils/moveit_error_code.h>
+
+// ========= ROS2 核心 =========
+
+// ROS2 节点、日志、时间等核心功能
 #include <rclcpp/rclcpp.hpp>
+
+// ========= ROS2 Action 相关 =========
+
+// Action Server 接口
+// - 用于实现 FollowJointTrajectory / Catch 等动作
 #include <rclcpp_action/server.hpp>
+
+// Action 目标句柄
+// - 管理 goal 的状态（接受 / 执行 / 取消）
 #include <rclcpp_action/server_goal_handle.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
+
+// Action Client 创建工具
 #include <rclcpp_action/create_client.hpp>
+
+// 自定义抓取 Action
+// - 通常包含目标位姿、结果状态等
 #include <robot_interfaces/action/catch.hpp>
 
 #include <thread>
