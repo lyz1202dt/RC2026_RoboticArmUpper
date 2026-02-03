@@ -1,3 +1,19 @@
+/**
+ * @file mixcontroller.cpp
+ *
+ * 本文件实现了一个 ROS 2 混合控制器（MixController），
+ * 主要功能包括：
+ *
+ * 1. 接收 FollowJointTrajectory Action 形式的关节轨迹
+ * 2. 对轨迹进行五次多项式插值（位置 / 速度 / 加速度连续）
+ * 3. 使用 KDL 进行机器人动力学计算（M、C、G）
+ * 4. 计算前馈力矩 τ = M·ddq + C + G
+ * 5. 通过 ros2_control 接口向硬件发送位置、速度、力矩指令
+ *
+ * 控制架构：
+ * Action → 插值（Quintic）→ 动力学（KDL）→ 硬件接口
+ */
+
 #include "control_pack/mixcontroller.hpp" 
 #include <Eigen/src/Core/Matrix.h>
 #include <chrono>
@@ -8,9 +24,24 @@
 
 namespace mixcontroller {
 
-// 一.五次多项式轨迹参数类实现
+/**
+ * @brief 根据边界条件计算五次多项式的系数
+ *
+ * @param t0 轨迹起始时间
+ * @param t1 轨迹结束时间
+ * @param p0 起点位置
+ * @param v0 起点速度
+ * @param a0 起点加速度
+ * @param pt 终点位置
+ * @param v1 终点速度
+ * @param at 终点加速度
+ *
+ * 根据 6 个边界条件，解析求解五次多项式的 6 个系数。
+ * 这是经典的轨迹规划公式推导结果。
+ */
 void QuinticParam::set_param(
-    const double t0, const double t1, const double p0, const double v0, const double a0, const double pt, const double v1, const double at
+    const double t0, const double t1, const double p0, const double v0, 
+    const double a0, const double pt, const double v1, const double at
 ) {
     double T  = t1 - t0; // 轨迹持续时间
     double T2 = T * T;  // 二次
@@ -30,7 +61,14 @@ void QuinticParam::set_param(
     this->t1 = t1;
 }
 
-// 计算任意时刻 t 处的轨迹位置值
+
+/**
+ * @brief 计算任意时刻的位置
+ *
+ * 边界处理：
+ * - t ≤ t0：返回起点状态
+ * - t ≥ t1：返回终点状态
+ */
 double QuinticParam::get_pos(const double t) {
     if (t <= t0)     // 边界返回起点位置
         return f;
@@ -43,8 +81,13 @@ double QuinticParam::get_pos(const double t) {
     return (a * tau * tau * tau * tau * tau + b * tau * tau * tau * tau + c * tau * tau * tau + d * tau * tau + e * tau + f);
 }
 
-// 计算任意时刻 t 处的轨迹速度值
-double QuinticParam::get_vel(const double t) {
+/**
+ * @brief 计算任意时刻的速度
+ *
+ * 边界处理：
+ * - t ≤ t0：返回起点状态
+ * - t ≥ t1：返回终点状态
+ */double QuinticParam::get_vel(const double t) {
     if (t <= t0)
         return e;
     if (t >= t1) {
@@ -56,8 +99,13 @@ double QuinticParam::get_vel(const double t) {
     return (5 * a * tau * tau * tau * tau + 4 * b * tau * tau * tau + 3 * c * tau * tau + 2 * d * tau + e);
 }
 
-// 计算任意时刻 t 处的轨迹加速度值
-double QuinticParam::get_acc(const double t) {
+/**
+ * @brief 计算任意时刻的加速度
+ *
+ * 边界处理：
+ * - t ≤ t0：返回起点状态
+ * - t ≥ t1：返回终点状态
+ */double QuinticParam::get_acc(const double t) {
     if (t <= t0)
         return 2.0 * d;
     if (t >= t1) {
@@ -72,7 +120,14 @@ double QuinticParam::get_acc(const double t) {
 // 将当前轨迹段索引 cur_index 初始化为零
 ContinuousTrajectory::ContinuousTrajectory() { cur_index = 0; }
 
-// 根据当前时间查询并计算轨迹插值结果
+/**
+ * @brief 根据当前时间获取期望的关节目标
+ *
+ * @param time 当前 ROS 时间
+ * @param output 插值后的关节目标（pos / vel / acc）
+ *
+ * @return false 表示轨迹已经执行完毕
+ */
 bool ContinuousTrajectory::get_target(const rclcpp::Time& time, trajectory_msgs::msg::JointTrajectoryPoint& output) {
     bool success = true;
     auto dt      = time - start_time; // 时间间隔

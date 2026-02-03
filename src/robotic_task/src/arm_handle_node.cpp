@@ -497,6 +497,15 @@ void ArmHandleNode::arm_catch_task_handle() {
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
             // RCLCPP_INFO(node->get_logger(), "Debug-1");
 
+
+
+
+
+
+
+
+
+
             count = 0;
             move_group_interface->setMaxVelocityScalingFactor(0.05);
             move_group_interface->setMaxAccelerationScalingFactor(0.025);
@@ -548,6 +557,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             // // 步骤七：笛卡尔路径规划
             //     // RobotTrajectory 消息用于存储计算出的笛卡尔路径
             // moveit_msgs::msg::RobotTrajectory cart_trajectory;
+            // moveit_msgs::msg::Constraints path_constraints ;
             //     // 调用 computeCartesianPath 函数进行笛卡尔路径规划，该函数会计算从当前位姿沿着直线移动到目标路点的轨迹
             //     /*
             //     参数说明：第一个参数是路点数组，第二个参数 0.01 是路点之间的最大距离（单位：米），
@@ -561,8 +571,8 @@ void ArmHandleNode::arm_catch_task_handle() {
             // count = 0;
 
             // // RCLCPP_INFO(node->get_logger(), "Debug-2");
-            // move_group_interface->setMaxAccelerationScalingFactor(0.07);
-            // move_group_interface->setMaxVelocityScalingFactor(0.1);
+            // // move_group_interface->setMaxAccelerationScalingFactor(0.07);
+            // // move_group_interface->setMaxVelocityScalingFactor(0.1);
 
             // fraction = move_group_interface->computeCartesianPath(way_points, 0.0001, 0.0, cart_trajectory, false);
 

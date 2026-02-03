@@ -1,6 +1,6 @@
-/*
-实现控制器与电机硬件之间的连接通信
-*/
+/**
+ * @brief 实现控制器与电机硬件之间的连接通信
+ */
 
 #include "hardware_interface/system_interface.hpp" // 硬件接口基类
 #include "pluginlib/class_list_macros.hpp"  // 插件库宏
@@ -21,9 +21,10 @@ class MyControl : public hardware_interface::SystemInterface {
 public:
     RCLCPP_SHARED_PTR_DEFINITIONS(MyControl)
 
-    // 初始化
-    hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareInfo& info) override {
-        // hardware_interface::HardwareInfo 关节列表
+    /**
+     * @brief 初始化
+     */
+    hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareInfo& info) override { // hardware_interface::HardwareInfo 关节列表
         // 读取 URDF 中 <ros2_control> 的参数，从 urdf 读取关节配置
         for (auto& joint : info.joints) {
             joint_names_.push_back(joint.name); // 保存关节名
@@ -54,8 +55,10 @@ public:
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
-    // 导出状态接口
-    std::vector<hardware_interface::StateInterface> export_state_interfaces() override {
+    /**
+     * @brief 导出状态接口
+     */
+    std::vector<hardware_interface::StateInterface> export_state_interfaces() override { // hardware_interface::StateInterface 从硬件读取状信息
         // 返回每个关节的位置/速度状态（按需构造，避免存储不可拷贝的接口对象）
         std::vector<hardware_interface::StateInterface> state_interfaces;
         state_interfaces.reserve(joint_names_.size() * 2);
@@ -69,7 +72,9 @@ public:
         return state_interfaces;
     }
 
-    // 导出命令接口
+    /**
+     * @brief 导出命令接口
+     */
     std::vector<hardware_interface::CommandInterface> export_command_interfaces() override {
         // 返回每个关节的位置命令接口（按需构造）
         std::vector<hardware_interface::CommandInterface> command_interfaces;
@@ -82,24 +87,32 @@ public:
         return command_interfaces;
     }
 
-    // 激活
+    /**
+     * @brief 激活控制器
+     */
     hardware_interface::CallbackReturn on_activate(const rclcpp_lifecycle::State& previous_state) override {
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
-    // 停用
+    /** 
+     * @brief 停用控制器
+     */
     hardware_interface::CallbackReturn on_deactivate(const rclcpp_lifecycle::State& previous_state) override {
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
-    // 读取状态
+    /** 
+     * @brief 读取状态
+     */
     hardware_interface::return_type read(const rclcpp::Time& time, const rclcpp::Duration& period) override {
         // 从MCU读取关节状态
         rclcpp::spin_some(node);
         return hardware_interface::return_type::OK;
     }
 
-    // 发送命令
+    /** 
+     * @brief 发送命令
+     */
     hardware_interface::return_type write(const rclcpp::Time& time, const rclcpp::Duration& period) override {
         // 将期望位置/速度写入MCU
         // 将命令发送给 MCU
