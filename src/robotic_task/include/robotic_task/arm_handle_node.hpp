@@ -130,13 +130,50 @@ typedef enum{
 }ArmTask;       //机械臂任务类型
 
 typedef enum{
-    ROBOTIC_ARM_STAGE_IDEL,
-    ROBOTIC_ARM_STAGE_MOVE_TO_READY_CATCH_POINT,
-    ROBOTIC_ARM_STAGE_MOVE_TO_CATCH_POINT,
-    ROBOTIC_ARM_STAGE_CATCH_TARGET,
-    ROBOTIC_ARM_STAGE_MOVE_TO_RELEASE_POINT,
-    ROBOTIC_ARM_STAGE_RELESE_TARGET,
+    ROBOTIC_ARM_STAGE_IDEL,   // 空闲                  
+    ROBOTIC_ARM_STAGE_MOVE_TO_READY_CATCH_POINT,    // 移动到预备抓取点
+    ROBOTIC_ARM_STAGE_MOVE_TO_CATCH_POINT,    // 移动到抓取点
+    ROBOTIC_ARM_STAGE_CATCH_TARGET,    // 抓取目标
+
+    // =============== [VISUAL SERVO] =============
+    ROBOTIC_ARM_STAGE_VISUAL_SERVOING,  // 视觉伺服控制
+
+    ROBOTIC_ARM_STAGE_MOVE_TO_RELEASE_POINT,    // 移动到释放点
+    ROBOTIC_ARM_STAGE_RELESE_TARGET,    // 释放目标
 }ArmTaskStage;
+
+
+// ===== [VISUAL SERVO] =====
+// 视觉伺服速度控制器（PBVS）
+class VisualServoController{
+    public:
+        struct ServoInput{
+            Eigen::Vector3d position_error;  // 末端到目标的位姿误差
+            Eigen::Vector3d orientation_error; //  旋转误差
+        };
+
+        struct ServoOutput{
+            Eigen::VectorXd joint_velocity;   // 关节速度
+        };
+
+        bool compute(
+            const ServoInput& input, 
+            const Eigen::MatrixXd& jacobian, 
+            ServoOutput& output
+        );
+
+    private:
+        double kp_pos_ = 0.0;   // 位置比例增益
+        double kp_ori_ = 0.6;   // 姿态比例增益
+        double max_vel_ = 0.3;  // 最大关节速度
+};
+
+
+
+
+
+
+
 
 class ArmHandleNode{
 public:
@@ -254,4 +291,22 @@ private:
 
     std::shared_ptr<TrajectorySmoother> trajectory_smoother_;
     std::shared_ptr<SegmentedVelocityController> segmented_velocity_controller_;
+
+
+
+
+    // ============ [VISUAL SERVO] ================
+    ArmTaskStage current_stage_{ROBOTIC_ARM_STAGE_IDEL};
+    std::shared_ptr<VisualServoController> visual_servo_controller_;
+    // 伺服阀值
+    const double SERVO_POS_THRESHOLD = 0.002;  // 2mm
+    const double SERVO_ORI_THRESHOLD = 0.03;   // ~2 deg
+    // 视觉目标
+    geometry_msgs::msg::Pose visual_target_pose;
+    // ============ [VISUAL SERVO] =================
+    bool visualServoLoop();
+    bool computeVisualError(
+        Eigen::Vector3d& pos_err, 
+        Eigen::Vector3d& orii_err
+    );
 };

@@ -127,6 +127,12 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
         arm_task_thread = nullptr;
     }
 
+
+
+
+    // ============= [VISUAL SERVO] =========================
+    visual_servo_controller_ = std::make_shared<VisualServoController>();
+
 }
 
 
@@ -887,7 +893,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                     count = 0;
                     while(success == false && count <=  MAX_COUNT_){
                         success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                        RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                        RCLCPP_WARN(node->get_logger(), "吸取前的准备位置规划失败，重行规划%d次", count+1);
                         count ++ ;
                     }
                     if (success != moveit::core::MoveItErrorCode::SUCCESS) {
@@ -936,14 +942,17 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // 十三、规划到放置目标位置（带重试循环）
             do {
-                move_group_interface->setStartStateToCurrentState();
-                move_group_interface->setPoseTarget(task_target_pos); // 放置任务——要放置的坐标
+                // move_group_interface->setStartStateToCurrentState();
+                // move_group_interface->setPoseTarget(task_target_pos); // 放置任务——要放置的坐标
+
+                move_group_interface->setNamedTarget("put_pos_1"); // 到达放置KFS的位置
 
                 auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 count = 0;
                 while(success == false && count <=  MAX_COUNT_){
                     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                    RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
+                    // RCLCPP_WARN(node->get_logger(), "task_target_pos位置规划失败，重行规划%d次", count+1);
+                     RCLCPP_WARN(node->get_logger(), "put_pos_1位置规划失败，重行规划%d次", count+1);
                     count ++ ;
                 }
                 if (success != true) {
@@ -959,40 +968,40 @@ void ArmHandleNode::arm_catch_task_handle() {
             if (continue_flag)
                 continue;
 
-            // 发布到达准备放置位置反馈
-            feedback_msg->current_state  = 3;
-            feedback_msg->state_describe = "到达准备放置KFS的地方";
-            current_goal_handle->publish_feedback(feedback_msg);
+            // // 发布到达准备放置位置反馈
+            // feedback_msg->current_state  = 3;
+            // feedback_msg->state_describe = "到达准备放置KFS的地方";
+            // current_goal_handle->publish_feedback(feedback_msg);
 
-            // 设置笛卡尔路径点
-            std::vector<geometry_msgs::msg::Pose> way_points;
-            way_points.resize(2);
-            way_points[0]   = task_target_pos; // 当前位姿
-            auto temp       = task_target_pos;
-            temp.position.x = temp.position.x + 0.4;
-            way_points[1]   = temp;            // 最终抓取位姿为当前位姿+0.4m以便于将KFS放入格子
+            // // 设置笛卡尔路径点
+            // std::vector<geometry_msgs::msg::Pose> way_points;
+            // way_points.resize(2);
+            // way_points[0]   = task_target_pos; // 当前位姿
+            // auto temp       = task_target_pos;
+            // temp.position.x = temp.position.x + 0.4;
+            // way_points[1]   = temp;            // 最终抓取位姿为当前位姿+0.4m以便于将KFS放入格子
 
-            // 笛卡尔路径规划
-            moveit_msgs::msg::RobotTrajectory cart_trajectory;
+            // // 笛卡尔路径规划
+            // moveit_msgs::msg::RobotTrajectory cart_trajectory;
 
-            double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            // double fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
             
-            count = 0;
-            while(fraction < 0.995f && count < MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(放置KFS)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
-                fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                count++;
-            }
-            if (fraction < 0.995f)             // 如果轨迹生成失败
-            {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
-                current_goal_handle->abort(finished_msg);
-                continue;
-            }
+            // count = 0;
+            // while(fraction < 0.995f && count < MAX_COUNT_){
+            //     RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(放置KFS)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
+            //     fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            //     count++;
+            // }
+            // if (fraction < 0.995f)             // 如果轨迹生成失败
+            // {
+            //     finished_msg->kfs_num = current_kfs_num;
+            //     finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
+            //     current_goal_handle->abort(finished_msg);
+            //     continue;
+            // }
 
-            // 执行笛卡尔轨迹
-            move_group_interface->execute(cart_trajectory);
+            // // 执行笛卡尔轨迹
+            // move_group_interface->execute(cart_trajectory);
 
             // 发布放置完成反馈
             feedback_msg->current_state  = 4;
@@ -1011,35 +1020,36 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 删除附着碰撞体
             remove_attached_kfs_collision();
 
-            // 规划返回路径
-            temp          = way_points[0];
-            way_points[0] = way_points[1];
-            way_points[1] = temp;  // 交换起点和终点
-            fraction      = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            // 规划返回路径p
             
-            count = 0;
-            while(fraction < 0.995f && count < MAX_COUNT_){
-                RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(返回轨迹)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
-                fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
-                count++;
-            }
-            if (fraction < 0.995f) // 如果轨迹生成失败
-            {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
-                current_goal_handle->abort(finished_msg);
-                continue;
-            }
+            // temp          = way_points[0];
+            // way_points[0] = way_points[1];
+            // way_points[1] = temp;  // 交换起点和终点
+            // fraction      = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            
+            // count = 0;
+            // while(fraction < 0.995f && count < MAX_COUNT_){
+            //     RCLCPP_WARN(node->get_logger(), "笛卡尔路径规划失败(返回轨迹)，重试 %d/%d, 规划比例: %.6f", count+1, MAX_COUNT_, fraction);
+            //     fraction = move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory, false);
+            //     count++;
+            // }
+            // if (fraction < 0.995f) // 如果轨迹生成失败
+            // {
+            //     finished_msg->kfs_num = current_kfs_num;
+            //     finished_msg->reason  = "放置时机械臂超出工作范围，抓取失败";
+            //     current_goal_handle->abort(finished_msg);
+            //     continue;
+            // }
 
-            // 执行返回轨迹
-            move_group_interface->execute(cart_trajectory);
+            // // 执行返回轨迹
+            // move_group_interface->execute(cart_trajectory);
 
-            // 发布收回机械臂反馈
-            feedback_msg->current_state  = 5;
-            feedback_msg->state_describe = "收回机械臂";
-            current_goal_handle->publish_feedback(feedback_msg);
+            // // 发布收回机械臂反馈
+            // feedback_msg->current_state  = 5;
+            // feedback_msg->state_describe = "收回机械臂";
+            // current_goal_handle->publish_feedback(feedback_msg);
 
-            // 更新KFS数量
+            // // 更新KFS数量
             current_kfs_num--;
 
             // 返回空闲位置

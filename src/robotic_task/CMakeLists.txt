@@ -45,6 +45,10 @@ add_executable(arm_test
   src/test.cpp
 )
 
+add_executable(arm_test02
+  src/test02.cpp
+)
+
 target_include_directories(robotic_task
   PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/robotic_task>
@@ -78,8 +82,18 @@ ament_target_dependencies(arm_test
   geometry_msgs
 )
 
+#机械臂测试任务
+ament_target_dependencies(arm_test02
+  rclcpp
+  rclcpp_action
+  std_msgs
+  trajectory_msgs
+  robot_interfaces
+  geometry_msgs
+)
+
 install(TARGETS
-robotic_task arm_test
+robotic_task arm_test arm_test02
 DESTINATION lib/${PROJECT_NAME})
 
 # install(
