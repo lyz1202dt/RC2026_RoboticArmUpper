@@ -39,8 +39,6 @@ endif()
 add_executable(robotic_task
   src/main.cpp
   src/arm_handle_node.cpp
-  src/arm_handle_node_1.cpp
-  src/arm_handle_node_2.cpp
 )
 
 add_executable(arm_test

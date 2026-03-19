@@ -21,20 +21,9 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <string>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
-#include <geometry_msgs/msg/twist.hpp>
 #include <vector>
-#include <deque>
-#include <mutex>
-#include <atomic>
-#include <memory>
 
 namespace mixcontroller {
-
-// 前向声明
-class RealtimeIKSolver;
-class TwistToTrajectoryConverter;
-class SafetyChecker;
-class DiagnosticsPublisher;
 
 
 // 五次多项式轨迹插值算法
@@ -88,10 +77,6 @@ public:
     controller_interface::InterfaceConfiguration command_interface_configuration() const override;
     controller_interface::InterfaceConfiguration state_interface_configuration() const override;
 
-    // 轨迹缓冲队列管理接口
-    bool append_trajectory(const trajectory_msgs::msg::JointTrajectory& trajectory);
-    size_t get_queue_size() const;
-
 private:
     rclcpp_action::Server<control_msgs::action::FollowJointTrajectory>::SharedPtr trajectory_action_server_;
     std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> activate_goal_handle_;
@@ -104,15 +89,6 @@ private:
     std::vector<std::string> joint_names_;
 
     ContinuousTrajectory continue_trajectory; // 轨迹管理对象：负责存储轨迹、计算插值
-
-    // 轨迹缓冲队列和状态管理
-    std::deque<trajectory_msgs::msg::JointTrajectory> trajectory_queue_;
-    mutable std::mutex trajectory_queue_mutex_;
-    std::atomic<bool> preempt_flag_{false};           // 新轨迹打断旧轨迹标志
-    std::atomic<bool> smooth_stop_flag_{false};       // 平滑停止标志
-    static constexpr size_t MAX_BUFFER_SIZE = 5;      // 缓冲队列最大大小
-    static constexpr size_t MIN_BUFFER_SIZE = 2;      // 最少保留轨迹数
-    double trajectory_transition_time_{0.1};          // 轨迹过渡时间（秒）
 
     KDL::Tree tree;
     KDL::Chain chain;
@@ -138,36 +114,11 @@ private:
     bool cancle_execut{false};
     bool finished_execut{false};
 
-    // 辅助函数
-    void load_next_trajectory_from_queue();
-    trajectory_msgs::msg::JointTrajectory generate_deceleration_trajectory(
-        const std::vector<double>& current_positions,
-        const std::vector<double>& current_velocities,
-        double deceleration_time = 0.2
-    );
 
     Eigen::Vector<double, 6> dynamicCalc();
 
-    // Twist 相关（为后续第二阶段预留）
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_sub_;
-    geometry_msgs::msg::Twist latest_twist_;
-    std::mutex twist_mutex_;
-    std::atomic<bool> twist_enabled_{false};
-
-    // 第二阶段：实时 IK 和 Twist 处理
-    std::shared_ptr<RealtimeIKSolver> ik_solver_;
-    std::shared_ptr<TwistToTrajectoryConverter> twist_converter_;
-    void twist_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
-    void generate_and_queue_twist_trajectory();
-
-    // 第三阶段：安全检查和诊断
-    std::shared_ptr<SafetyChecker> safety_checker_;
-    std::shared_ptr<DiagnosticsPublisher> diagnostics_publisher_;
-    
-    // 性能监控
-    std::chrono::steady_clock::time_point last_ik_time_start_;
-    double last_ik_solve_time_ms_ = 0.0;
-    
+    geometry
 
 };
 

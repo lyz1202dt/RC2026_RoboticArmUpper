@@ -1,8 +1,4 @@
 #include "control_pack/mixcontroller.hpp" 
-#include "control_pack/realtime_ik_solver.hpp"
-#include "control_pack/twist_to_trajectory.hpp"
-#include "control_pack/safety_checker.hpp"
-#include "control_pack/diagnostics_publisher.hpp"
 #include <Eigen/src/Core/Matrix.h>
 #include <chrono>
 #include <memory>
@@ -158,8 +154,6 @@ controller_interface::CallbackReturn MixController::on_init() {
     feedback_msg->actual.velocities.resize(joint_names_.size());
     feedback_msg->actual.effort.resize(joint_names_.size());
 
-    // 第三阶段初始化将在 on_configure 中完成（需要 KDL chain）
-    
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -191,29 +185,6 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     // 创建一个动力学计算器的对象
     dyn = std::make_shared<KDL::ChainDynParam>(chain, gravity); // 调整电机输出
 
-    // 第三阶段：初始化 IK 求解器和相关组件
-    // 1. 创建实时 IK 求解器
-    ik_solver_ = std::make_shared<RealtimeIKSolver>(chain, get_node()->get_logger());
-    
-    // 2. 创建 Twist 到轨迹的转换器
-    twist_converter_ = std::make_shared<TwistToTrajectoryConverter>(
-        ik_solver_, 0.01, get_node()->get_logger());
-    
-    // 3. 创建安全检查器
-    safety_checker_ = std::make_shared<SafetyChecker>(6, get_node()->get_logger());
-    
-    // 4. 创建诊断发布器
-    diagnostics_publisher_ = std::make_shared<DiagnosticsPublisher>(get_node());
-    
-    // 5. 订阅 Twist 命令话题
-    twist_sub_ = get_node()->create_subscription<geometry_msgs::msg::Twist>(
-        "arm_controller/twist_command", 
-        1,
-        std::bind(&MixController::twist_callback, this, std::placeholders::_1)
-    );
-    
-    RCLCPP_INFO(get_node()->get_logger(), "第三阶段组件初始化完成");
-
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -233,52 +204,36 @@ controller_interface::CallbackReturn MixController::on_deactivate(const rclcpp_l
 
 // 控制器主循环
 controller_interface::return_type MixController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
-    // 检查平滑停止标志
-    if (smooth_stop_flag_) {
-        // 生成减速轨迹
-        std::vector<double> current_positions(output_state.positions);
-        std::vector<double> current_velocities(output_state.velocities);
-        auto decel_traj = generate_deceleration_trajectory(current_positions, current_velocities, 0.2);
-        
-        // 清空缓冲队列，只执行减速轨迹
-        {
-            std::lock_guard<std::mutex> lock(trajectory_queue_mutex_);
-            trajectory_queue_.clear();
-        }
-        
-        continue_trajectory.set_trajectory(decel_traj);
-        continue_trajectory.start_track(time);
-        smooth_stop_flag_ = false;
-        is_execut_trajectory = true;
-        
-        RCLCPP_INFO(this->get_node()->get_logger(), "执行平滑停止减速轨迹");
-    }
-
     // 没有轨迹要执行
     if (!is_execut_trajectory) {
+        // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新(未发送)");
         return controller_interface::return_type::OK;
     }
 
     // 五次多项式插值计算输出
+    // get_target 读取当前播放位置
     bool ret = continue_trajectory.get_target(time, output_state);
 
     // 填充 KDL 数据结构
-    for (size_t i = 0; i < joint_names_.size(); i++) {
+    for (size_t i = 0; i < joint_names_.size(); i++) // 填写轨迹位置/速度/加速度信息
+    {
         q_kdl(i)   = output_state.positions[i];
         dq_kdl(i)  = output_state.velocities[i];
         ddq_kdl(i) = output_state.accelerations[i];
     }
 
     // 动力学计算
-    Eigen::Vector<double, 6> torque = dynamicCalc();
+    Eigen::Vector<double, 6> torque = dynamicCalc(); // 计算力矩前馈值，计算所需力矩大小
 
-    for (size_t i = 0; i < joint_names_.size(); i++) {
-        command_interfaces_[i * 3 + 0].set_value(q_kdl(i));
-        command_interfaces_[i * 3 + 1].set_value(dq_kdl(i));
-        command_interfaces_[i * 3 + 2].set_value(torque(i));
+    for (size_t i = 0; i < joint_names_.size(); i++) // 将计算结果写入硬件层
+    {
+        command_interfaces_[i * 3 + 0].set_value(q_kdl(i));         // 写入位置
+        command_interfaces_[i * 3 + 1].set_value(dq_kdl(i));        // 写入速度
+        command_interfaces_[i * 3 + 2].set_value(torque(i)); // 写入力矩
     }
 
-    // 实时反馈
+
+    // TODO:实时反馈
     feedback_msg->joint_names        = joint_names_;
     feedback_msg->desired.positions  = output_state.positions;
     feedback_msg->desired.velocities = output_state.velocities;
@@ -289,19 +244,15 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
     feedback_msg->header.stamp = get_node()->now();
     activate_goal_handle_->publish_feedback(feedback_msg);
 
-    // 轨迹完成时的处理
-    if (!ret) {
-        load_next_trajectory_from_queue();
-        
-        // 如果没有更多轨迹，发送完成反馈
-        if (!is_execut_trajectory) {
-            result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
-            result_msg->error_string = "Trajectory finished";
-            activate_goal_handle_->succeed(result_msg);
-            RCLCPP_INFO(this->get_node()->get_logger(), "所有轨迹执行完成");
-        }
+    // 通知轨迹完成
+    if (!ret) { // 如果这点是最后一个点，那么发送完成状态
+        is_execut_trajectory     = false;
+        result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
+        result_msg->error_string = "Trajectory finished";
+        activate_goal_handle_->succeed(result_msg);
     }
 
+    // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新");
     return controller_interface::return_type::OK;
 }
 
@@ -336,26 +287,19 @@ rclcpp_action::GoalResponse MixController::handle_goal(
     const rclcpp_action::GoalUUID& uuid, // 目标唯一标识符
     const std::shared_ptr<const control_msgs::action::FollowJointTrajectory::Goal> goal // 目标内容
 ) {
-    // 重置取消执行标志
-    cancle_execut = false;
-    smooth_stop_flag_ = false;
-
-    // 尝试追加轨迹到缓冲队列
-    if (!append_trajectory(goal->trajectory)) {
-        RCLCPP_WARN(this->get_node()->get_logger(), "轨迹缓冲队列已满，拒绝新 Goal");
+    // 如果正在执行其他轨迹，拒绝新目标
+    if (is_execut_trajectory)
         return rclcpp_action::GoalResponse::REJECT;
-    }
 
-    // 如果当前没有执行轨迹，立即启动
-    if (!is_execut_trajectory) {
-        is_execut_trajectory = true;
-        continue_trajectory.set_trajectory(goal->trajectory);
-        RCLCPP_INFO(this->get_node()->get_logger(), "立即启动新轨迹执行");
-    } else {
-        RCLCPP_INFO(this->get_node()->get_logger(), "轨迹已追加到缓冲队列 (队列大小: %zu)", get_queue_size());
-    }
+    // 重置取消执行
+    cancle_execut = false;
 
-    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+    // 将目标中的轨迹数据保存到控制器
+    // set_trajectory 接收轨迹
+    continue_trajectory.set_trajectory(goal->trajectory);            // 设置要执行的轨迹
+
+    RCLCPP_INFO(this->get_node()->get_logger(), "接收轨迹");
+    return rclcpp_action::GoalResponse ::ACCEPT_AND_EXECUTE;
 }
 
 // 处理轨迹取消请求
@@ -364,10 +308,11 @@ rclcpp_action::CancelResponse
     // 标记未使用的参数
     (void)goal_handle;
 
-    // 设置平滑停止标志（而非立即硬停）
-    smooth_stop_flag_ = true;
+    // 停止轨迹执行
+    is_execut_trajectory = false;
 
-    RCLCPP_INFO(this->get_node()->get_logger(), "启动平滑停止流程");
+    // 标记已取消
+    cancle_execut        = true;
 
     // 接受取消请求
     return rclcpp_action::CancelResponse::ACCEPT;
@@ -411,181 +356,6 @@ Eigen::Vector<double, 6> MixController::dynamicCalc() {
     // 7. 计算前馈力矩 tau
     // 计算前馈力矩：τ = M·ddq + C + G
     return (M_mat * ddq + C + G);
-}
-
-// 轨迹缓冲队列管理函数
-bool MixController::append_trajectory(const trajectory_msgs::msg::JointTrajectory& trajectory) {
-    std::lock_guard<std::mutex> lock(trajectory_queue_mutex_);
-    
-    // 检查缓冲队列是否满
-    if (trajectory_queue_.size() >= MAX_BUFFER_SIZE) {
-        RCLCPP_WARN(this->get_node()->get_logger(), 
-            "轨迹缓冲队列已满 (大小: %zu/%zu)，丢弃最旧的轨迹", 
-            trajectory_queue_.size(), MAX_BUFFER_SIZE);
-        trajectory_queue_.pop_front();
-    }
-    
-    trajectory_queue_.push_back(trajectory);
-    return true;
-}
-
-size_t MixController::get_queue_size() const {
-    std::lock_guard<std::mutex> lock(trajectory_queue_mutex_);
-    return trajectory_queue_.size();
-}
-
-// 加载缓冲队列中的下一个轨迹
-void MixController::load_next_trajectory_from_queue() {
-    std::lock_guard<std::mutex> lock(trajectory_queue_mutex_);
-    
-    if (trajectory_queue_.empty()) {
-        is_execut_trajectory = false;
-        RCLCPP_INFO(this->get_node()->get_logger(), "缓冲队列为空，轨迹执行结束");
-        return;
-    }
-    
-    auto next_trajectory = trajectory_queue_.front();
-    trajectory_queue_.pop_front();
-    
-    // 生成过渡轨迹：当前位置 → 下一轨迹起点
-    std::vector<double> current_pos = output_state.positions;
-    std::vector<double> next_start_pos = next_trajectory.points[0].positions;
-    
-    trajectory_msgs::msg::JointTrajectory transition_traj;
-    transition_traj.joint_names = joint_names_;
-    
-    // 生成 10 个过渡点（100ms），每个 10ms
-    int num_transition_points = static_cast<int>(trajectory_transition_time_ * 100);
-    transition_traj.points.resize(num_transition_points);
-    
-    for (int i = 0; i < num_transition_points; ++i) {
-        trajectory_msgs::msg::JointTrajectoryPoint point;
-        double alpha = static_cast<double>(i) / num_transition_points;
-        
-        point.positions.resize(6);
-        point.velocities.resize(6);
-        point.accelerations.resize(6);
-        
-        for (size_t j = 0; j < 6; ++j) {
-            // 线性插值位置
-            point.positions[j] = current_pos[j] + alpha * (next_start_pos[j] - current_pos[j]);
-            // 速度和加速度初始化为 0
-            point.velocities[j] = 0.0;
-            point.accelerations[j] = 0.0;
-        }
-        
-        point.time_from_start.sec = i / 100;
-        point.time_from_start.nanosec = (i % 100) * 10000000;  // 10ms in nanoseconds
-        transition_traj.points[i] = point;
-    }
-    
-    // 执行过渡轨迹然后是下一个轨迹
-    // 先执行过渡，完成后会自动加载下一个
-    continue_trajectory.set_trajectory(transition_traj);
-    continue_trajectory.start_track(get_node()->get_clock()->now());
-    
-    // 将原来的下一个轨迹重新放回队列，待过渡完成后执行
-    trajectory_queue_.push_front(next_trajectory);
-    
-    RCLCPP_INFO(this->get_node()->get_logger(), "加载过渡轨迹，剩余缓冲: %zu", trajectory_queue_.size());
-}
-
-// 生成减速轨迹，用于平滑停止
-trajectory_msgs::msg::JointTrajectory MixController::generate_deceleration_trajectory(
-    const std::vector<double>& current_positions,
-    const std::vector<double>& current_velocities,
-    double deceleration_time
-) {
-    trajectory_msgs::msg::JointTrajectory decel_traj;
-    decel_traj.joint_names = joint_names_;
-    
-    int num_points = static_cast<int>(deceleration_time * 100);  // 100Hz for 0.2s = 20 points
-    decel_traj.points.resize(num_points);
-    
-    for (int i = 0; i < num_points; ++i) {
-        trajectory_msgs::msg::JointTrajectoryPoint point;
-        double time_ratio = static_cast<double>(i) / num_points;
-        double velocity_scale = 1.0 - time_ratio;  // 线性衰减速度
-        
-        point.positions.resize(6);
-        point.velocities.resize(6);
-        point.accelerations.resize(6);
-        
-        for (size_t j = 0; j < 6; ++j) {
-            // 位置：当前位置 + 速度 * 时间（速度线性衰减）
-            point.positions[j] = current_positions[j] + 
-                                 current_velocities[j] * time_ratio * (2.0 - time_ratio) * deceleration_time;
-            // 速度线性衰减到 0
-            point.velocities[j] = current_velocities[j] * velocity_scale;
-            // 加速度：(-v/T)
-            point.accelerations[j] = -current_velocities[j] / deceleration_time;
-        }
-        
-        point.time_from_start.sec = i / 100;
-        point.time_from_start.nanosec = (i % 100) * 10000000;
-        decel_traj.points[i] = point;
-    }
-    
-    RCLCPP_INFO(this->get_node()->get_logger(), "生成 %d 个减速轨迹点，共 %.1f 秒", num_points, deceleration_time);
-    return decel_traj;
-}
-
-// Twist 回调函数
-void MixController::twist_callback(const geometry_msgs::msg::Twist::SharedPtr msg) {
-    {
-        std::lock_guard<std::mutex> lock(twist_mutex_);
-        latest_twist_ = *msg;
-        twist_enabled_ = true;
-    }
-    
-    // 生成并追加微轨迹
-    generate_and_queue_twist_trajectory();
-}
-
-// 生成并追加 Twist 轨迹到缓冲队列
-void MixController::generate_and_queue_twist_trajectory() {
-    if (!twist_enabled_ || !ik_solver_ || !twist_converter_) {
-        return;
-    }
-
-    try {
-        // 记录 IK 求解时间
-        auto ik_start = std::chrono::steady_clock::now();
-
-        // 使用 Twist 转换器生成微轨迹
-        geometry_msgs::msg::Twist current_twist;
-        {
-            std::lock_guard<std::mutex> lock(twist_mutex_);
-            current_twist = latest_twist_;
-        }
-
-        auto micro_traj = twist_converter_->convert_twist_to_micro_trajectory(
-            current_twist,
-            q_kdl,
-            dq_kdl,
-            joint_names_,
-            3  // 生成 3 个轨迹点
-        );
-
-        // 计算 IK 求解时间
-        auto ik_end = std::chrono::steady_clock::now();
-        last_ik_solve_time_ms_ = std::chrono::duration<double, std::milli>(ik_end - ik_start).count();
-
-        if (!micro_traj.points.empty()) {
-            // 追加到缓冲队列
-            append_trajectory(micro_traj);
-            
-            // 如果没有执行轨迹，立即启动
-            if (!is_execut_trajectory) {
-                is_execut_trajectory = true;
-                continue_trajectory.set_trajectory(micro_traj);
-                continue_trajectory.start_track(get_node()->get_clock()->now());
-                RCLCPP_DEBUG(get_node()->get_logger(), "启动 Twist 轨迹执行");
-            }
-        }
-    } catch (const std::exception& e) {
-        RCLCPP_WARN(get_node()->get_logger(), "生成 Twist 轨迹出错: %s", e.what());
-    }
 }
 
 
