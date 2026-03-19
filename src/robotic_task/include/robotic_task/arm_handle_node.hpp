@@ -148,7 +148,7 @@ private:
     // 规划参数配置
     const double SWITCH_DISTANCE_THRESHOLD = 0.01;  // 切换距离阈值（米）
     const double CARTESIAN_GOAL_TOLERANCE = 0.001;   // 笛卡尔空间目标容差
-    const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差
+    const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差`
     const double VELOCITY_SCALING = 0.4;             // 速度缩放因子
     const double ACCELERATION_SCALING = 0.3;         // 加速度缩放因子
     // rclcpp::Node::SharedPtr node_;
@@ -166,4 +166,20 @@ private:
 
     std::shared_ptr<TrajectorySmoother> trajectory_smoother_;
     std::shared_ptr<SegmentedVelocityController> segmented_velocity_controller_;
+
+
+    // 
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr vision_subscription_;
+
+    geometry_msgs::msg::Pose detected_target_pose_;
+    geometry_msgs::msg::Pose available_target_pose_;
+
+    void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+    if (msg->header.frame_id == "available_target") {
+        detected_target_pose_ = msg->pose;
+        available_target_pose_ = detected_target_pose_;
+    } else if (msg->header.frame_id == "unavailable_target") {
+        detected_target_pose_ = available_target_pose_;
+    }
+}
 };

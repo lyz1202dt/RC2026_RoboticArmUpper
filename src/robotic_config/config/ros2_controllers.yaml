@@ -17,6 +17,7 @@ controller_manager:
       - joint3
       - joint4
       - joint5
+      - joint6
 
 robotic_arm_controller:
   ros__parameters:
@@ -26,6 +27,7 @@ robotic_arm_controller:
       - joint3
       - joint4
       - joint5
+      - joint6
 
     command_interfaces:
       - position
