@@ -37,3 +37,73 @@ robotic_arm_controller:
       - position
       - velocity
     allow_nonzero_velocity_at_trajectory_end: false
+    
+    # 第二阶段：实时 IK 和 Twist 处理配置
+    # Twist 订阅话题配置
+    twist_command_topic: "arm_controller/twist_command"
+    twist_enabled: false
+    
+    # IK 求解器参数
+    ik_damping_factor: 0.01          # DLS 阻尼因子，用于处理奇异点
+    ik_solve_timeout_ms: 2.0         # IK 求解超时时间（毫秒）
+    ik_joint_velocity_limit: 2.0     # IK 计算的关节速度限制（rad/s）
+    
+    # Twist 转换器参数
+    twist_conversion_timeout_ms: 10.0     # Twist 转换超时时间
+    twist_smoothing_factor: 0.1            # 平滑因子，值越小平滑越强
+    twist_acceleration_limit: 10.0         # Twist 加速度限制
+    micro_trajectory_points: 3             # 单个 Twist 周期生成的微轨迹点数
+    
+    # 第三阶段：安全限制配置
+    # 关节级别的安全限制（每个关节）
+    joint1:
+      max_velocity: 1.5                # rad/s
+      max_acceleration: 3.0            # rad/s²
+      max_effort: 50.0                 # N·m
+      min_position: -3.2               # rad
+      max_position: 3.2                # rad
+      
+    joint2:
+      max_velocity: 1.5
+      max_acceleration: 3.0
+      max_effort: 50.0
+      min_position: -2.0
+      max_position: 2.0
+      
+    joint3:
+      max_velocity: 1.5
+      max_acceleration: 3.0
+      max_effort: 50.0
+      min_position: -2.0
+      max_position: 2.0
+      
+    joint4:
+      max_velocity: 2.0
+      max_acceleration: 4.0
+      max_effort: 30.0
+      min_position: -3.2
+      max_position: 3.2
+      
+    joint5:
+      max_velocity: 2.0
+      max_acceleration: 4.0
+      max_effort: 30.0
+      min_position: -3.2
+      max_position: 3.2
+      
+    joint6:
+      max_velocity: 2.5
+      max_acceleration: 5.0
+      max_effort: 20.0
+      min_position: -3.2
+      max_position: 3.2
+    
+    # 系统级别的安全限制
+    enable_safety_limits: true         # 启用安全限制
+    safety_check_period_ms: 10         # 安全检查周期（毫秒）
+    emergency_stop_deceleration: 5.0   # 紧急停止时的减速度（rad/s²）
+    
+    # 诊断和监控配置
+    enable_diagnostics: true           # 启用诊断发布
+    diagnostics_publish_rate_hz: 10    # 诊断发布频率（Hz）
+    marker_visualization_enabled: true # 启用 Rviz Marker 可视化

@@ -22,6 +22,8 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(kdl_parser REQUIRED)
 find_package(orocos_kdl REQUIRED)
@@ -53,6 +55,10 @@ add_library(mycontrol SHARED
 # 
 add_library(mixcontroller SHARED
   src/mixcontroller.cpp
+  src/realtime_ik_solver.cpp
+  src/twist_to_trajectory.cpp
+  src/safety_checker.cpp
+  src/diagnostics_publisher.cpp
 )
 
 target_include_directories(mixcontroller PUBLIC
@@ -74,6 +80,13 @@ ament_target_dependencies(
   pluginlib
   hardware_interface
   kdl_parser
+  trajectory_msgs
+  control_msgs
+  geometry_msgs
+  visualization_msgs
+  rclcpp_action
+  rclcpp_lifecycle
+  orocos_kdl
 )
 
 ament_target_dependencies(mycontrol
