@@ -57,8 +57,7 @@ private:
     // calculate twist
     geometry_msgs::msg::Twist CalculateTwist(Eigen::Vector3d& path_vector);
 
-    // send twist to controller
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_;
+    
 
 
 

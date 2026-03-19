@@ -116,10 +116,6 @@ private:
 
 
     Eigen::Vector<double, 6> dynamicCalc();
-
-    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_sub_;
-    geometry
-
 };
 
 
