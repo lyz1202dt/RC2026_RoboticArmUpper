@@ -4,6 +4,7 @@
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <controller_interface/controller_interface.hpp>
 #include <controller_interface/controller_interface_base.hpp>
+#include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <hardware_interface/loaned_command_interface.hpp>
 #include <hardware_interface/loaned_state_interface.hpp>
 #include <joint_trajectory_controller/interpolation_methods.hpp>
@@ -18,6 +19,7 @@
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/subscription.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <string>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
@@ -83,7 +85,7 @@ private:
     control_msgs::action::FollowJointTrajectory::Feedback::SharedPtr feedback_msg;
     control_msgs::action::FollowJointTrajectory::Result::SharedPtr result_msg;
     trajectory_msgs::msg::JointTrajectory current_trajectory_;
-
+    KDL::Chain chain;
     trajectory_msgs::msg::JointTrajectoryPoint output_state;
 
     std::vector<std::string> joint_names_;
@@ -91,7 +93,7 @@ private:
     ContinuousTrajectory continue_trajectory; // 轨迹管理对象：负责存储轨迹、计算插值
 
     KDL::Tree tree;
-    KDL::Chain chain;
+   
     std::string urdf_xml;
     rclcpp::Node::SharedPtr param_node;
     rclcpp::SyncParametersClient::SharedPtr robot_description_param_;
@@ -101,7 +103,7 @@ private:
     std::shared_ptr<KDL::ChainDynParam> dyn; // 动力学计算对象
     KDL::JntSpaceInertiaMatrix M_kdl; //  惯性矩阵
     KDL::JntArray C_kdl, G_kdl; // 科里奥利力和重力
-    KDL::JntArray q_kdl, dq_kdl, ddq_kdl; // 科里奥利力和重力
+    KDL::JntArray q_kdl, dq_kdl, ddq_kdl; //
 
 
     rclcpp_action::GoalResponse
@@ -116,6 +118,25 @@ private:
 
 
     Eigen::Vector<double, 6> dynamicCalc();
+
+
+
+
+
+
+
+
+
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_subscriber_;
+    geometry_msgs::msg::Twist twist_command_;
+    KDL::Twist kdl_twist_command_;
+    KDL::JntArray q_dot_;
+
+    bool UseMoveit{true}; // 是否使用 MoveIt 进行轨迹插值计算
+
+
+
+
 };
 
 

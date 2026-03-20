@@ -74,6 +74,8 @@ ament_target_dependencies(
   pluginlib
   hardware_interface
   kdl_parser
+  orocos_kdl
+  moveit_msgs
 )
 
 ament_target_dependencies(mycontrol
@@ -83,6 +85,7 @@ ament_target_dependencies(mycontrol
   controller_manager_msgs
   urdf
   robot_interfaces
+  orocos_kdl
 )
 
 install(

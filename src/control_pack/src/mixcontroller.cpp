@@ -5,6 +5,17 @@
 #include <rclcpp/time.hpp>
 #include <rclcpp_action/server.hpp>
 
+#include <kdl_parser/kdl_parser.hpp>
+#include <kdl/chain.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/chainjnttojacsolver.hpp>
+#include <kdl/chainjnttojacdotsolver.hpp>
+
+#include <kdl/chainjnttojacsolver.hpp>
+
+
+#include <kdl/chainiksolvervel_pinv.hpp>
+
 
 namespace mixcontroller {
 
@@ -117,7 +128,34 @@ void ContinuousTrajectory::start_track(rclcpp::Time now) {
 void ContinuousTrajectory::set_trajectory(const trajectory_msgs::msg::JointTrajectory& trajectory) { this->trajectory = trajectory; }
 
 // 创建一个 ROS 2 节点，用于获取机器人参数
-MixController::MixController() { param_node = std::make_shared<rclcpp::Node>("param_node"); }
+MixController::MixController() { 
+    param_node = std::make_shared<rclcpp::Node>("param_node"); 
+    twist_subscriber_ = param_node->create_subscription<geometry_msgs::msg::Twist>(
+        "twist_command", 10, 
+        [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
+            // 处理接收到的 Twist 消息
+            RCLCPP_INFO(this->get_node()->get_logger(), "Received Twist command: linear=(%f, %f, %f), angular=(%f, %f, %f)",
+                        msg->linear.x, msg->linear.y, msg->linear.z,
+                        msg->angular.x, msg->angular.y, msg->angular.z);
+            twist_command_ = *msg; // 保存接收到的 Twist 命令
+            kdl_twist_command_.vel = KDL::Vector(twist_command_.linear.x, twist_command_.linear.y, twist_command_.linear.z);
+            kdl_twist_command_.rot = KDL::Vector(twist_command_.angular.x, twist_command_.angular.y, twist_command_.angular.z);
+            auto ik_solver_ = std::make_shared<KDL::ChainIkSolverVel_pinv>(chain); // 创建逆运动学求解器
+            KDL::JntArray q_current(chain.getNrOfJoints()); // 当前关节位置
+            for (size_t i = 0; i < joint_names_.size(); ++i) {
+                q_current(i) = state_interfaces_[i * 2 + 0].get_value(); // 从状态接口获取当前关节位置
+            }
+
+
+            q_dot_(chain.getNrOfJoints()); // 关节速度
+
+            int ik_result = ik_solver_->CartToJnt(q_current, kdl_twist_command_, q_dot_); // 计算逆运动学，得到关节速度命令
+            if (ik_result < 0) {
+                RCLCPP_ERROR(this->get_node()->get_logger(), "Failed to compute IK solution for the given twist command");
+                return;
+            }
+        });
+}
 
 // 控制器初始化：创建 Action 服务器、分配内存、准备数据结构
 controller_interface::CallbackReturn MixController::on_init() {
@@ -210,17 +248,44 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
         return controller_interface::return_type::OK;
     }
 
-    // 五次多项式插值计算输出
-    // get_target 读取当前播放位置
-    bool ret = continue_trajectory.get_target(time, output_state);
+    if (UseMoveit) {
+        // 五次多项式插值计算输出
+        // get_target 读取当前播放位置
+        bool ret = continue_trajectory.get_target(time, output_state);
 
-    // 填充 KDL 数据结构
-    for (size_t i = 0; i < joint_names_.size(); i++) // 填写轨迹位置/速度/加速度信息
-    {
-        q_kdl(i)   = output_state.positions[i];
-        dq_kdl(i)  = output_state.velocities[i];
-        ddq_kdl(i) = output_state.accelerations[i];
-    }
+        // 填充 KDL 数据结构
+        for (size_t i = 0; i < joint_names_.size(); i++) // 填写轨迹位置/速度/加速度信息
+        {
+            q_kdl(i)   = output_state.positions[i];
+            dq_kdl(i)  = output_state.velocities[i];
+            ddq_kdl(i) = output_state.accelerations[i];
+        }
+    } else {
+        // use velocity control, 直接把速度命令写入接口
+
+        while(rclcpp::ok()){
+            rclcpp::Rate(10).sleep();
+            if (cancle_execut) {
+                cancle_execut = false;
+                break;
+            }
+
+            for(size_t i = 0 ; i < joint_names_.size(); ++i){
+                dq_kdl(i) = q_dot_(i);      // Read joint velocity command from q_dot_
+                ddq_kdl(i) = 0.0;           // No acceleration in velocity control mode
+            }
+        }
+    };
+
+
+
+
+
+
+
+
+
+
 
     // 动力学计算
     Eigen::Vector<double, 6> torque = dynamicCalc(); // 计算力矩前馈值，计算所需力矩大小
@@ -244,13 +309,13 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
     feedback_msg->header.stamp = get_node()->now();
     activate_goal_handle_->publish_feedback(feedback_msg);
 
-    // 通知轨迹完成
-    if (!ret) { // 如果这点是最后一个点，那么发送完成状态
-        is_execut_trajectory     = false;
-        result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
-        result_msg->error_string = "Trajectory finished";
-        activate_goal_handle_->succeed(result_msg);
-    }
+    // // 通知轨迹完成
+    // if (!ret) { // 如果这点是最后一个点，那么发送完成状态
+    //     is_execut_trajectory     = false;
+    //     result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
+    //     result_msg->error_string = "Trajectory finished";
+    //     activate_goal_handle_->succeed(result_msg);
+    // }
 
     // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新");
     return controller_interface::return_type::OK;

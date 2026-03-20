@@ -57,6 +57,9 @@ private:
     // calculate twist
     geometry_msgs::msg::Twist CalculateTwist(Eigen::Vector3d& path_vector);
 
+    // send twist command
+    void SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg);
+
     
 
 
@@ -100,11 +103,12 @@ geometry_msgs::msg::Twist VisualServoingArmHandleNode::CalculateTwist(Eigen::Vec
     twist_msg.angular.y = 0.0;
     twist_msg.angular.z = 0.0;
 
-
     return twist_msg;
 }
 
-
+void VisualServoingArmHandleNode::SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg) {
+    
+}
 
 
 
