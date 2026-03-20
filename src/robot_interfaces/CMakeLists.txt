@@ -15,12 +15,14 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 
+
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Joint.msg"
   "msg/Arm.msg"
   "action/Catch.action"
+  "msg/Moveit.msg"
 
-  DEPENDENCIES builtin_interfaces geometry_msgs std_msgs action_msgs
+  DEPENDENCIES builtin_interfaces geometry_msgs std_msgs action_msgs 
 )
 
 

@@ -69,6 +69,7 @@ $<INSTALL_INTERFACE:include>
 ament_target_dependencies(
   mixcontroller
   rclcpp
+  robot_interfaces
   controller_interface
   joint_trajectory_controller
   pluginlib

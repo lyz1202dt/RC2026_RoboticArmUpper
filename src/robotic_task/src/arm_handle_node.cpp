@@ -18,6 +18,7 @@
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter.hpp>
 #include <rclcpp/parameter_client.hpp>
+#include <rclcpp/rate.hpp>
 #include <rclcpp/utilities.hpp>
 #include <string>
 #include <tf2/LinearMath/Quaternion.hpp>
@@ -45,6 +46,8 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
     vision_subscription_ = node->create_subscription<geometry_msgs::msg::PoseStamped>(
     "robotic_task_", 10,
     std::bind(&ArmHandleNode::visionCallback, this, std::placeholders::_1));
+
+    moveit_pub_ = node->create_publisher<robot_interfaces::msg::Moveit>("moveit_command", 10);
 
 
     // 坐标变换监听
@@ -165,6 +168,7 @@ rclcpp_action::GoalResponse
         return rclcpp_action::GoalResponse::REJECT;
     }
 
+    
     // Transform the pose manually
     // geometry_msgs::msg::Pose transformed_pose;
     // 将相机识别的物体位置转换到主坐标系下
@@ -504,39 +508,76 @@ void ArmHandleNode::arm_catch_task_handle() {
             remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
             // RCLCPP_INFO(node->get_logger(), "Debug-1");
 
-            count = 0;
-            move_group_interface->setMaxVelocityScalingFactor(0.05);
-            move_group_interface->setMaxAccelerationScalingFactor(0.025);
-            move_group_interface->setStartStateToCurrentState();
-            move_group_interface->setPoseTarget(grasp_pose);
-            success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
 
-            while(success == false && count <= MAX_COUNT_){
-                    ++count;
-                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                    RCLCPP_WARN(node->get_logger(), "位置规划失败，重新规划%d次", count);
-            }
-            if(success){
-                RCLCPP_INFO(node->get_logger(), "抓取过程规划成功");
-            } else {
-                RCLCPP_INFO(node->get_logger(), "抓取过程规划失败");
-            }
-
-            if (!success) {
-                finished_msg->kfs_num = current_kfs_num;
-                finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达(ROBOTIC_ARM_TASK_CATCH_TARGET)";
-                // 调用 abort 方法终止当前 Action 目标
-                current_goal_handle->abort(finished_msg);
-                // 在抓取前删除KFS防止因碰撞检测无法连接
-                remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   
-                continue;
+            while(rclcpp::ok()){
+                rclcpp::Rate loop_rate(10);
+                auto target_pos_ = calculate_prepare_pos(task_target_pos, 0.05, grasp_pose); // 计算抓取位姿（在目标位置基础上更近一些）
+                Eigen::Vector3d current_pos(current_pose.pose.position.x, current_pose.pose.position.y, current_pose.pose.position.z);
+                Eigen::Vector3d target_pos(target_pos_.position.x, target_pos_.position.y, target_pos_.position.z);
+                visual_servoing_handler_.TotalPackaing(current_pos, target_pos);
+                loop_rate.sleep();
             }
 
 
-            move_group_interface->execute(plan);
-            RCLCPP_INFO(node->get_logger(), "执行抓取");
-            move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
-            move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
+
+
+
+
+
+
+
+
+
+
+
+            // count = 0;
+            // move_group_interface->setMaxVelocityScalingFactor(0.05);
+            // move_group_interface->setMaxAccelerationScalingFactor(0.025);
+            // move_group_interface->setStartStateToCurrentState();
+            // move_group_interface->setPoseTarget(grasp_pose);
+            // success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+
+            // while(success == false && count <= MAX_COUNT_){
+            //         ++count;
+            //         success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            //         RCLCPP_WARN(node->get_logger(), "位置规划失败，重新规划%d次", count);
+            // }
+            // if(success){
+            //     RCLCPP_INFO(node->get_logger(), "抓取过程规划成功");
+            // } else {
+            //     RCLCPP_INFO(node->get_logger(), "抓取过程规划失败");
+            // }
+
+            // if (!success) {
+            //     finished_msg->kfs_num = current_kfs_num;
+            //     finished_msg->reason  = "机械臂路径规划失败，目标位姿可能不可达(ROBOTIC_ARM_TASK_CATCH_TARGET)";
+            //     // 调用 abort 方法终止当前 Action 目标
+            //     current_goal_handle->abort(finished_msg);
+            //     // 在抓取前删除KFS防止因碰撞检测无法连接
+            //     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   
+            //     continue;
+            // }
+
+
+            // move_group_interface->execute(plan);
+            // RCLCPP_INFO(node->get_logger(), "执行抓取");
+            // move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
+            // move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

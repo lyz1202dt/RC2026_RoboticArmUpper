@@ -2,6 +2,7 @@
 
 #include "SegmentedVelocityController.hpp"
 #include "TragectorySmoother.hpp"
+#include "ArmHandleNodeVisualServoing.hpp"
 
 #include "visualization_msgs/msg/marker.hpp"
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
@@ -10,6 +11,7 @@
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/publisher.hpp>
+#include <robot_interfaces/msg/detail/moveit__struct.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.hpp>
@@ -26,6 +28,7 @@
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <rclcpp_action/create_client.hpp>
 #include <robot_interfaces/action/catch.hpp>
+#include <robot_interfaces/msg/moveit.hpp>
 
 #include <thread>
 #include <memory>
@@ -76,8 +79,10 @@ private:
     std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> current_goal_handle;
     moveit::core::RobotModelConstPtr robot_module;
     std::unique_ptr<std::thread> arm_task_thread;    //执行期望，解析plan并发布节点的线程
+
     geometry_msgs::msg::Pose task_target_pos; // 目标位置
-    std::atomic<bool> is_running_arm_task{false}; // 目标位置
+
+    std::atomic<bool> is_running_arm_task{false}; 
     std::atomic<bool> cancle_current_task{false};
     std::atomic<int> current_task_type{0}; // 任务类型
     std::atomic<int> current_kfs_num{0}; // kfs的数量
@@ -111,7 +116,10 @@ private:
         SIDE_ROBOT     // 从靠近机器人的侧面抓取
     };
 
+
     geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose, ApproachMode mode = ApproachMode::AUTO);
+    
+    
     bool add_attached_kfs_collision();
     bool remove_attached_kfs_collision();
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
@@ -174,12 +182,19 @@ private:
     geometry_msgs::msg::Pose detected_target_pose_;
     geometry_msgs::msg::Pose available_target_pose_;
 
+    // TODO: 真正的相机返回判断条件
     void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-    if (msg->header.frame_id == "available_target") {
-        detected_target_pose_ = msg->pose;
-        available_target_pose_ = detected_target_pose_;
-    } else if (msg->header.frame_id == "unavailable_target") {
-        detected_target_pose_ = available_target_pose_;
+        if (msg->header.frame_id == "available_target") {
+            detected_target_pose_ = msg->pose;
+            available_target_pose_ = detected_target_pose_;
+        } else if (msg->header.frame_id == "unavailable_target") {
+            detected_target_pose_ = available_target_pose_;
+        }
     }
-}
+
+    rclcpp::Publisher<robot_interfaces::msg::Moveit>::SharedPtr moveit_pub_;
+
+    // ArmHandleNodeVisualServoing  // 视觉伺服处理对象
+    VisualServoingArmHandleNode visual_servoing_handler_;
+
 };

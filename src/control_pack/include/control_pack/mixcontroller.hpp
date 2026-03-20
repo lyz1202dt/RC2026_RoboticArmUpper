@@ -24,6 +24,9 @@
 #include <string>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <vector>
+#include <robot_interfaces/msg/moveit.hpp>
+
+
 
 namespace mixcontroller {
 
@@ -133,6 +136,8 @@ private:
     KDL::JntArray q_dot_;
 
     bool UseMoveit{true}; // 是否使用 MoveIt 进行轨迹插值计算
+
+    rclcpp::Subscription<robot_interfaces::msg::Moveit>::SharedPtr moveit_subscriber_;
 
 
 

@@ -1,1 +1,1 @@
-bool UseMoveit
+bool use_moveit

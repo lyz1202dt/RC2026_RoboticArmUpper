@@ -6,6 +6,7 @@
 #include "visualization_msgs/msg/marker.hpp"
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
+#include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
@@ -42,6 +43,10 @@ public:
     explicit VisualServoingArmHandleNode(const rclcpp::Node::SharedPtr node);
     ~VisualServoingArmHandleNode();
 
+    
+    // total package control flow
+    void TotalPackaing(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
+
 private:
     // current 
     geometry_msgs::msg::PoseStamped CurrentPose_;
@@ -50,6 +55,8 @@ private:
 
     rclcpp::Node::SharedPtr node_;
     Eigen::Vector3d path_vector_;
+
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_;
 
     // calculate path vector
     Eigen::Vector3d CalculatePath(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
@@ -60,6 +67,8 @@ private:
     // send twist command
     void SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg);
 
+
+
     
 
 
@@ -69,6 +78,8 @@ private:
 VisualServoingArmHandleNode::VisualServoingArmHandleNode(const rclcpp::Node::SharedPtr node) : node_(node) {
     // 初始化路径向量
     path_vector_ = Eigen::Vector3d::Zero();
+    // 创建发布器
+    twist_publisher_ = node_->create_publisher<geometry_msgs::msg::Twist>("twist_command", 10);
 }
 
 VisualServoingArmHandleNode::~VisualServoingArmHandleNode() {
@@ -107,10 +118,17 @@ geometry_msgs::msg::Twist VisualServoingArmHandleNode::CalculateTwist(Eigen::Vec
 }
 
 void VisualServoingArmHandleNode::SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg) {
-    
+    twist_publisher_->publish(twist_msg); // 发布Twist消息
 }
 
-
+void VisualServoingArmHandleNode::TotalPackaing(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position) {
+    // 计算路径向量
+    Eigen::Vector3d path_vector = CalculatePath(current_position, target_position);
+    // 计算Twist命令
+    geometry_msgs::msg::Twist twist_msg = CalculateTwist(path_vector);
+    // 发送Twist命令
+    SendTwistCommand(twist_msg);
+}
 
 
 
