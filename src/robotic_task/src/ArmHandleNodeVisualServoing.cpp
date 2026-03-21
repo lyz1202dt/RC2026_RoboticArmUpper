@@ -1,5 +1,6 @@
 #include "ArmHandleNodeVisualServoing.hpp"
 #include <cmath>
+#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <rclcpp/duration.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2/LinearMath/Matrix3x3.hpp>
@@ -216,7 +217,17 @@ Eigen::Quaterniond VisualServoingArmHandleNode::CalculateTargetOrientation(const
     return target_orientation;
 }
 
-void VisualServoingArmHandleNode::TotalPackaing(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position) {
+void VisualServoingArmHandleNode::TotalPackaing(
+    Eigen::Vector3d& current_position, Eigen::Vector3d& target_position,
+    geometry_msgs::msg::PoseStamped& actual_position, geometry_msgs::msg::PoseStamped& final_desired_position
+    ) {
+    
+    // 设置当前位姿和目标位姿
+    CurrentPose_ = actual_position;
+    TargetPose_ = final_desired_position;
+    actual_position_ = actual_position;
+    final_desired_position_ = final_desired_position;
+
     // 计算路径向量
     Eigen::Vector3d path_vector = CalculatePath(current_position, target_position);
 
@@ -225,9 +236,10 @@ void VisualServoingArmHandleNode::TotalPackaing(Eigen::Vector3d& current_positio
 
     ComputationalSpeed(); // 计算当前期望速度和位置
     
-    // 发送Twist命令
-    // SendTwistCommand(twist_msg);
+    // 将末端数据转换为关节轨迹
+    PointToTrajectoryPoint();
 
+    // 发送轨迹命令
     SendTrajectoryCommand();
 
     // if (path_vector.norm() < 0.01) { // 如果路径向量的大小小于某个阈值，认为已经到达目标位置
@@ -462,11 +474,24 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
         ),
         KDL::Vector(pose.position.x, pose.position.y, pose.position.z)
     );
+    double roll, pitch, yaw;
+    target_frame.M.GetRPY(roll, pitch, yaw);
+    RCLCPP_INFO(node_->get_logger(),
+        "KDL Frame position: x=%.3f, y=%.3f, z=%.3f. KDL Frame orientation (RPY): roll=%.3f, pitch=%.3f, yaw=%.3f",
+        target_frame.p.x(), target_frame.p.y(), target_frame.p.z(),
+        roll, pitch, yaw
+    );
+
     
     // 2. 获取当前关节位置作为初值
     KDL::JntArray q_init, q_result;
     {
         std::lock_guard<std::mutex> lock(joint_state_mutex_);
+        RCLCPP_INFO(node_->get_logger(), "q_init: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+            current_joint_positions_(0), current_joint_positions_(1),
+            current_joint_positions_(2), current_joint_positions_(3),
+            current_joint_positions_(4), current_joint_positions_(5)
+        );
         q_init = current_joint_positions_;
     }
     q_result.resize(q_init.rows());
@@ -475,8 +500,27 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     int ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_result);
     if (ik_result < 0) {
         RCLCPP_ERROR(node_->get_logger(), "IK求解失败: %d", ik_result);
+        double roll, pitch, yaw;
+
+        target_frame.M.GetRPY(roll, pitch, yaw);
+
+        RCLCPP_ERROR(node_->get_logger(),
+            "目标位姿: position=(%.3f, %.3f, %.3f), orientation(RPY)=(%.3f, %.3f, %.3f)",
+            target_frame.p.x(), target_frame.p.y(), target_frame.p.z(),
+            roll, pitch, yaw
+        );
+
         return;
     }
+
+    std::ostringstream ss;
+    ss << "q_result: [";
+    for (unsigned int i = 0; i < q_result.rows(); ++i) {
+        ss << q_result(i);
+        if (i != q_result.rows() - 1) ss << ", ";
+    }
+    ss << "]";
+    RCLCPP_INFO(node_->get_logger(), "%s", ss.str().c_str());
     
     // 4. 计算雅可比矩阵，转换速度和加速度
     KDL::Jacobian jacobian(kdl_chain_.getNrOfJoints());

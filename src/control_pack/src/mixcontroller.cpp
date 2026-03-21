@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <memory>
+#include <rclcpp/logging.hpp>
 #include <rclcpp/time.hpp>
 #include <rclcpp_action/server.hpp>
 
@@ -87,9 +88,16 @@ ContinuousTrajectory::ContinuousTrajectory() { cur_index = 0; }
 
 // 根据当前时间查询并计算轨迹插值结果
 bool ContinuousTrajectory::get_target(const rclcpp::Time& time, trajectory_msgs::msg::JointTrajectoryPoint& output) {
+    // 检查轨迹是否为空
+    if (trajectory.points.empty()) {
+        return false;
+    }
+    
     bool success = true;
     auto dt      = time - start_time; // 时间间隔
-    while (dt >= trajectory.points[cur_index].time_from_start) { // 已经经过的时间大于当前轨迹点的时间戳
+    
+    // 先检查 cur_index 是否越界，再访问 trajectory.points[cur_index]
+    while (cur_index < trajectory.points.size() && dt >= trajectory.points[cur_index].time_from_start) {
         // time_from_start 是相对于轨迹开始时间的时间戳,相对于轨迹起点的时间偏移量。
 
         cur_index++;
@@ -109,8 +117,15 @@ bool ContinuousTrajectory::get_target(const rclcpp::Time& time, trajectory_msgs:
             line[i].set_param(t0, t1, P0.positions[i], P0.velocities[i], P0.accelerations[i], PT.positions[i], PT.velocities[i], PT.accelerations[i]);
         }
     }
+    
     if (trajectory.points.size() == cur_index) // 轨迹已经执行完毕
         return false;
+    
+    // 确保 output 向量有足够空间
+    if (output.positions.size() < 6) output.positions.resize(6);
+    if (output.velocities.size() < 6) output.velocities.resize(6);
+    if (output.accelerations.size() < 6) output.accelerations.resize(6);
+    
     for (int i = 0; i < 6; i++)                // 计算插值结果
     {
         output.positions[i]     = line[i].get_pos(dt.seconds());
@@ -180,12 +195,30 @@ MixController::MixController() {
                     *this->param_node->get_clock(),
                     2000,
                     "Received initial joint trajectory"
-
-                    
-
-
                 );
-                // TODO: 处理初始关节轨迹
+
+                // 检查轨迹点是否有效
+                if (msg->points.empty()) {
+                    RCLCPP_WARN(this->param_node->get_logger(), "Received empty trajectory");
+                    return;
+                }
+
+                // 存储实时目标点
+                {
+                    std::lock_guard<std::mutex> lock(realtime_target_mutex_);
+                    realtime_target_ = msg->points[0];
+                }
+
+                // 设置实时流模式标志
+                is_realtime_stream_.store(true, std::memory_order_relaxed);
+
+                RCLCPP_DEBUG(
+                    this->param_node->get_logger(),
+                    "Realtime stream target: pos[0]=%.4f, vel[0]=%.4f, acc[0]=%.4f",
+                    realtime_target_.positions.size() > 0 ? realtime_target_.positions[0] : 0.0,
+                    realtime_target_.velocities.size() > 0 ? realtime_target_.velocities[0] : 0.0,
+                    realtime_target_.accelerations.size() > 0 ? realtime_target_.accelerations[0] : 0.0
+                );
             }
         );
 
@@ -206,14 +239,15 @@ controller_interface::CallbackReturn MixController::on_init() {
     moveit_subscriber_ = get_node()->create_subscription<robot_interfaces::msg::Moveit>(
         "moveit_command", 10,
         [this](const robot_interfaces::msg::Moveit::SharedPtr msg) {
+            UseMoveit.store(msg->use_moveit, std::memory_order_relaxed);
             RCLCPP_DEBUG_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
                 2000,
-                "Received MoveIt command: use_moveit=%d",
-                msg->use_moveit
+                "接受到使用moveit: use_moveit=%d",
+                UseMoveit.load(std::memory_order_relaxed)
             );
-            UseMoveit.store(msg->use_moveit, std::memory_order_relaxed);
+            is_realtime_stream_.store(UseMoveit.load(std::memory_order_relaxed));
         }
     );
     // 实时消息
@@ -321,11 +355,11 @@ controller_interface::CallbackReturn MixController::on_deactivate(const rclcpp_l
 
 // 控制器主循环
 controller_interface::return_type MixController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
-    // 没有轨迹要执行
-    if (!is_execut_trajectory) {
-        // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新(未发送)");
-        return controller_interface::return_type::OK;
-    }
+    // // 没有轨迹要执行
+    // if (!is_execut_trajectory) {
+    //     // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新(未发送)");
+    //     return controller_interface::return_type::OK;
+    // }
 
 
 
@@ -347,11 +381,65 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
 
 
     (void)period;
-    bool ret = true;
     const size_t controlled_dof = std::min(joint_names_.size(), kdl_dof_);
     if (controlled_dof == 0) {
         return controller_interface::return_type::ERROR;
     }
+
+    // 检查实时流模式
+    const bool is_realtime = is_realtime_stream_.load(std::memory_order_relaxed);
+
+    if (is_realtime != was_realtime_mode_) {
+        RCLCPP_INFO(
+            this->get_node()->get_logger(),
+            "控制模式切换: %s",
+            is_realtime ? "实时流模式(initial_joint_trajectory)" : "轨迹执行模式(FollowJointTrajectory)"
+        );
+        was_realtime_mode_ = is_realtime;
+    }
+
+    if (is_realtime) {
+        RCLCPP_INFO(this->get_node()->get_logger(), "正在使用实时流模式");
+
+        // 实时流模式：直接使用接收到的目标点
+        trajectory_msgs::msg::JointTrajectoryPoint target;
+        {
+            std::lock_guard<std::mutex> lock(realtime_target_mutex_);
+            target = realtime_target_;
+        }
+
+        // 填充 KDL 数据结构
+        for (size_t i = 0; i < controlled_dof; i++) {
+            q_kdl(i)   = (i < target.positions.size()) ? target.positions[i] : 0.0;
+            dq_kdl(i)  = (i < target.velocities.size()) ? target.velocities[i] : 0.0;
+            ddq_kdl(i) = (i < target.accelerations.size()) ? target.accelerations[i] : 0.0;
+        }
+
+        // 动力学计算
+        Eigen::VectorXd torque = dynamicCalc();
+
+        // 写入硬件接口
+        for (size_t i = 0; i < joint_names_.size(); i++) {
+            const double pos = (i < controlled_dof) ? q_kdl(i) : 0.0;
+            const double vel = (i < controlled_dof) ? dq_kdl(i) : 0.0;
+            const double eff = (i < static_cast<size_t>(torque.size())) ? torque(static_cast<Eigen::Index>(i)) : 0.0;
+            command_interfaces_[i * 3 + 0].set_value(pos);
+            command_interfaces_[i * 3 + 1].set_value(vel);
+            command_interfaces_[i * 3 + 2].set_value(eff);
+        }
+
+        return controller_interface::return_type::OK;
+    }
+
+
+
+    
+    // 轨迹模式：执行预定义轨迹
+    if (!is_execut_trajectory) {
+        return controller_interface::return_type::OK;
+    }
+
+    bool ret = true;
     const bool use_moveit = UseMoveit.load(std::memory_order_relaxed);
 
 
@@ -421,7 +509,7 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
     }
 
     // 通知轨迹完成（仅 MoveIt 轨迹模式）
-    if (use_moveit && !ret) { // 如果这点是最后一个点，那么发送完成状态
+    if (!use_moveit && !ret) { // 如果这点是最后一个点，那么发送完成状态
         is_execut_trajectory     = false;
         result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
         result_msg->error_string = "Trajectory finished";

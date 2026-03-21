@@ -16,6 +16,7 @@
 #include <kdl/tree.hpp>
 #include <kdl_parser/kdl_parser.hpp>
 #include <atomic>
+#include <mutex>
 #include <memory>
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/logging.hpp>
@@ -137,12 +138,17 @@ private:
     KDL::JntArray q_dot_;
     size_t kdl_dof_{0};
 
-    std::atomic_bool UseMoveit{true}; // 是否使用 MoveIt 进行轨迹插值计算
+    std::atomic_bool UseMoveit{false}; // 是否使用 MoveIt 进行轨迹插值计算
 
     rclcpp::Subscription<robot_interfaces::msg::Moveit>::SharedPtr moveit_subscriber_;
 
     rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr initial_joint_trajectory_subscriber_;
 
+    // 实时流模式支持
+    std::atomic_bool is_realtime_stream_{false};  // 是否处于实时流模式
+    bool was_realtime_mode_{false};  // 记录上一次 update() 里的模式，用于输出切换日志
+    trajectory_msgs::msg::JointTrajectoryPoint realtime_target_;  // 实时目标点
+    std::mutex realtime_target_mutex_;  // 保护实时目标点
 
 };
 

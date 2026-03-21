@@ -9,6 +9,7 @@
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
+#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <geometry_msgs/msg/detail/vector3__struct.hpp>
 #include <memory>
 #include <moveit/utils/moveit_error_code.h>
@@ -199,6 +200,7 @@ rclcpp_action::GoalResponse
 
 
     current_task_type = goal->action_type; // 任务类型
+    RCLCPP_INFO(node->get_logger(), "Debug1");
 
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -534,17 +536,12 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
-
-
-            robot_interfaces::msg::Moveit moveit_msg ;
-            moveit_msg.use_moveit = false; // 视觉伺服控制，不使用 MoveIt 进行路径规划
-
-            moveit_pub_->publish(moveit_msg); // 发布消息，通知视觉伺服开始工作
-
-
+            robot_interfaces::msg::Moveit moveit_msg;
+            moveit_msg.use_moveit = true;
+            moveit_pub_->publish(moveit_msg);
             // 以 10Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
-            rclcpp::Rate loop_rate(10.0);
-            const int max_servo_steps = 100;
+            rclcpp::Rate loop_rate(50.0);
+            const int max_servo_steps = 10;
             for (int step = 0; rclcpp::ok() && step < max_servo_steps; ++step) {
                 if (cancle_current_task) {
                     RCLCPP_WARN(node->get_logger(), "视觉伺服被取消");
@@ -573,40 +570,32 @@ void ArmHandleNode::arm_catch_task_handle() {
                 auto current_pose_now = move_group_interface->getCurrentPose();
                 auto target_pose_now = calculate_prepare_pos(task_target_pos, 0.05, grasp_pose); // 10Hz 更新目标位置
 
-                Eigen::Vector3d current_pos(
+                geometry_msgs::msg::PoseStamped final_desired_position;
+                final_desired_position.header.frame_id = "base_link";
+                final_desired_position.pose = target_pose_now;
+                final_desired_position.header.stamp = node->get_clock()->now();
+
+                Eigen::Vector3d current_pose_eigen{
                     current_pose_now.pose.position.x,
                     current_pose_now.pose.position.y,
                     current_pose_now.pose.position.z
-                );
-                Eigen::Vector3d target_pos(
-                    target_pose_now.position.x,
-                    target_pose_now.position.y,
-                    target_pose_now.position.z
-                );
+                };
 
-                visual_servoing_handler_.TotalPackaing(current_pos, target_pos);
+                Eigen::Vector3d final_desired_position_eigen{
+                    final_desired_position.pose.position.x,
+                    final_desired_position.pose.position.y,
+                    final_desired_position.pose.position.z
+                };
+
+                visual_servoing_handler_.TotalPackaing(current_pose_eigen, final_desired_position_eigen, current_pose_now, final_desired_position);
                 
                 
                 
                 loop_rate.sleep();
             }
-
-
-
-
             
-            moveit_msg.use_moveit = false; // 视觉伺服控制，不使用 MoveIt 进行路径规划
-
-            moveit_pub_->publish(moveit_msg); // 发布消息，通知视觉伺服开始工作
-
-
-
-
-
-
-
-
-
+            moveit_msg.use_moveit = false;
+            moveit_pub_->publish(moveit_msg);
 
 
 

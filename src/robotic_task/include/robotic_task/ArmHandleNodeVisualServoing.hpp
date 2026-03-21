@@ -58,7 +58,9 @@ public:
 
     
     // total package control flow
-    void TotalPackaing(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
+    void TotalPackaing(
+        Eigen::Vector3d& current_position, Eigen::Vector3d& target_position,
+        geometry_msgs::msg::PoseStamped& actual_position, geometry_msgs::msg::PoseStamped& final_desired_position);
 
 private:
     // current 
