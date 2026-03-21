@@ -20,6 +20,7 @@ def generate_launch_description():
             package="robot_driver",
             executable="robot_driver",
             output="screen",
+            arguments=["--ros-args", "--log-level", "warn"],
             parameters=[{
                 "use_sim_time": False
             }]

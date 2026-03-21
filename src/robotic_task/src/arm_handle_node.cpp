@@ -31,7 +31,7 @@
 
 using namespace std::chrono_literals;
 
-ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
+ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), visual_servoing_handler_(node) {
 
     this->node = node;                                                                                         // 以依赖注入的方式，传入要管理的节点
     param_client      = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
@@ -47,6 +47,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
     "robotic_task_", 10,
     std::bind(&ArmHandleNode::visionCallback, this, std::placeholders::_1));
 
+    // TODO: 使用伺服时，发布假。使用moveit时，发布真。
     moveit_pub_ = node->create_publisher<robot_interfaces::msg::Moveit>("moveit_command", 10);
 
 
@@ -85,7 +86,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node) {
          *
          *  marker.action = visualization_msgs::msg::Marker::DELETEALL;
          *  mark_pub_->publish(marker);
-        */
+         */
 
         // 球心位置
         marker.pose = task_target_pos;
@@ -294,7 +295,9 @@ void ArmHandleNode::arm_catch_task_handle() {
         collision_object.primitives[3] = collision_object.primitives[2] = collision_object.primitives[1] = collision_object.primitives[0];
 
         collision_object.operation = collision_object.ADD;
-        psi->applyCollisionObject(collision_object);                                     // 应用障碍物
+        psi->applyCollisionObject(collision_object);                 // 应用障碍物
+
+        RCLCPP_INFO(node->get_logger(), "应用障碍物");
     }
 
     do {
@@ -509,14 +512,107 @@ void ArmHandleNode::arm_catch_task_handle() {
             // RCLCPP_INFO(node->get_logger(), "Debug-1");
 
 
-            while(rclcpp::ok()){
-                rclcpp::Rate loop_rate(10);
-                auto target_pos_ = calculate_prepare_pos(task_target_pos, 0.05, grasp_pose); // 计算抓取位姿（在目标位置基础上更近一些）
-                Eigen::Vector3d current_pos(current_pose.pose.position.x, current_pose.pose.position.y, current_pose.pose.position.z);
-                Eigen::Vector3d target_pos(target_pos_.position.x, target_pos_.position.y, target_pos_.position.z);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            robot_interfaces::msg::Moveit moveit_msg ;
+            moveit_msg.use_moveit = false; // 视觉伺服控制，不使用 MoveIt 进行路径规划
+
+            moveit_pub_->publish(moveit_msg); // 发布消息，通知视觉伺服开始工作
+
+
+            // 以 10Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
+            rclcpp::Rate loop_rate(10.0);
+            const int max_servo_steps = 100;
+            for (int step = 0; rclcpp::ok() && step < max_servo_steps; ++step) {
+                if (cancle_current_task) {
+                    RCLCPP_WARN(node->get_logger(), "视觉伺服被取消");
+                    break;
+                }
+
+                geometry_msgs::msg::Pose vision_target_in_camera;
+                bool has_vision_target = false;
+                {
+                    std::lock_guard<std::mutex> lock(vision_target_mutex_);
+                    if (has_vision_target_) {
+                        vision_target_in_camera = detected_target_pose_;
+                        has_vision_target = true;
+                    }
+                }
+
+                if (has_vision_target) {
+                    try {
+                        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
+                        tf2::doTransform(vision_target_in_camera, task_target_pos, camera_link0_tf);
+                    } catch (const tf2::TransformException& ex) {
+                        RCLCPP_WARN(node->get_logger(), "视觉伺服更新目标失败: %s", ex.what());
+                    }
+                }
+
+                auto current_pose_now = move_group_interface->getCurrentPose();
+                auto target_pose_now = calculate_prepare_pos(task_target_pos, 0.05, grasp_pose); // 10Hz 更新目标位置
+
+                Eigen::Vector3d current_pos(
+                    current_pose_now.pose.position.x,
+                    current_pose_now.pose.position.y,
+                    current_pose_now.pose.position.z
+                );
+                Eigen::Vector3d target_pos(
+                    target_pose_now.position.x,
+                    target_pose_now.position.y,
+                    target_pose_now.position.z
+                );
+
                 visual_servoing_handler_.TotalPackaing(current_pos, target_pos);
+                
+                
+                
                 loop_rate.sleep();
             }
+
+
+
+
+            
+            moveit_msg.use_moveit = false; // 视觉伺服控制，不使用 MoveIt 进行路径规划
+
+            moveit_pub_->publish(moveit_msg); // 发布消息，通知视觉伺服开始工作
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -781,6 +877,9 @@ void ArmHandleNode::arm_catch_task_handle() {
                 }
             } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS); // 如果执行失败那么尝试重新规划并执行
            
+            RCLCPP_INFO(node->get_logger(), "机械臂到达放置KFS的位置");
+
+
             // 步骤十五：继续后续操作
             if (continue_flag)
                 continue;

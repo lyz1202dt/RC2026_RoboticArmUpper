@@ -1,5 +1,6 @@
 #include "control_pack/mixcontroller.hpp" 
 #include <Eigen/src/Core/Matrix.h>
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <rclcpp/time.hpp>
@@ -15,6 +16,7 @@
 
 
 #include <kdl/chainiksolvervel_pinv.hpp>
+#include <robot_interfaces/msg/detail/moveit__struct.hpp>
 
 
 namespace mixcontroller {
@@ -134,20 +136,34 @@ MixController::MixController() {
         "twist_command", 10, 
         [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
             // 处理接收到的 Twist 消息
-            RCLCPP_INFO(this->get_node()->get_logger(), "Received Twist command: linear=(%f, %f, %f), angular=(%f, %f, %f)",
-                        msg->linear.x, msg->linear.y, msg->linear.z,
-                        msg->angular.x, msg->angular.y, msg->angular.z);
+            RCLCPP_DEBUG_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                2000,
+                "Received Twist command: linear=(%f, %f, %f), angular=(%f, %f, %f)",
+                msg->linear.x,
+                msg->linear.y,
+                msg->linear.z,
+                msg->angular.x,
+                msg->angular.y,
+                msg->angular.z
+            );
             twist_command_ = *msg; // 保存接收到的 Twist 命令
             kdl_twist_command_.vel = KDL::Vector(twist_command_.linear.x, twist_command_.linear.y, twist_command_.linear.z);
             kdl_twist_command_.rot = KDL::Vector(twist_command_.angular.x, twist_command_.angular.y, twist_command_.angular.z);
             auto ik_solver_ = std::make_shared<KDL::ChainIkSolverVel_pinv>(chain); // 创建逆运动学求解器
-            KDL::JntArray q_current(chain.getNrOfJoints()); // 当前关节位置
+            if (state_interfaces_.size() < joint_names_.size() * 2) {
+                return;
+            }
+
+            KDL::JntArray q_current(joint_names_.size()); // 当前关节位置
             for (size_t i = 0; i < joint_names_.size(); ++i) {
                 q_current(i) = state_interfaces_[i * 2 + 0].get_value(); // 从状态接口获取当前关节位置
             }
 
-
-            q_dot_(chain.getNrOfJoints()); // 关节速度
+            if (q_dot_.rows() != static_cast<unsigned int>(joint_names_.size())) {
+                q_dot_.resize(joint_names_.size());
+            }
 
             int ik_result = ik_solver_->CartToJnt(q_current, kdl_twist_command_, q_dot_); // 计算逆运动学，得到关节速度命令
             if (ik_result < 0) {
@@ -155,6 +171,24 @@ MixController::MixController() {
                 return;
             }
         });
+
+        initial_joint_trajectory_subscriber_ = param_node->create_subscription<trajectory_msgs::msg::JointTrajectory>(
+            "initial_joint_trajectory", 10,
+            [this](const trajectory_msgs::msg::JointTrajectory::SharedPtr msg) {
+                RCLCPP_DEBUG_THROTTLE(
+                    this->param_node->get_logger(),
+                    *this->param_node->get_clock(),
+                    2000,
+                    "Received initial joint trajectory"
+
+                    
+
+
+                );
+                // TODO: 处理初始关节轨迹
+            }
+        );
+
 }
 
 // 控制器初始化：创建 Action 服务器、分配内存、准备数据结构
@@ -168,20 +202,36 @@ controller_interface::CallbackReturn MixController::on_init() {
         get_node(), "robotic_arm_controller/arm_command", std::bind(&MixController::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
         std::bind(&MixController::handle_cancel, this, std::placeholders::_1), std::bind(&MixController::handle_accepted, this, std::placeholders::_1)
     );
+
+    moveit_subscriber_ = get_node()->create_subscription<robot_interfaces::msg::Moveit>(
+        "moveit_command", 10,
+        [this](const robot_interfaces::msg::Moveit::SharedPtr msg) {
+            RCLCPP_DEBUG_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                2000,
+                "Received MoveIt command: use_moveit=%d",
+                msg->use_moveit
+            );
+            UseMoveit.store(msg->use_moveit, std::memory_order_relaxed);
+        }
+    );
     // 实时消息
     result_msg   = std::make_shared<control_msgs::action::FollowJointTrajectory::Result>();
     feedback_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Feedback>();
     // 设置关节名称
     joint_names_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
 
-    // 为 6 个关节准备存储空间
-    size_t dof = joint_names_.size(); // dof = 6（自由度数量）
-    q_kdl.resize(dof); // 关节位置
-    dq_kdl.resize(dof); // 关节速度
-    ddq_kdl.resize(dof); // 关节加速度
-    C_kdl.resize(dof); // 科里奥利力
-    M_kdl.resize(dof); // 惯性矩阵
-    G_kdl.resize(dof); // 重力
+    // 先按关节名数量初始化，on_configure 后会按 KDL 实际自由度重设
+    size_t dof = joint_names_.size();
+    q_kdl.resize(dof);
+    dq_kdl.resize(dof);
+    ddq_kdl.resize(dof);
+    C_kdl.resize(dof);
+    M_kdl.resize(dof);
+    G_kdl.resize(dof);
+    q_dot_.resize(dof);
+    kdl_dof_ = dof;
 
     // 存储插值计算的结果，resize（把向量的大小调整成指定值），
     output_state.positions.resize(dof);
@@ -212,8 +262,37 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     }
 
     // 解析urdf
-    kdl_parser::treeFromString(urdf_xml, tree); // 构建 KDL 树（机器人的运动学结构）
-    tree.getChain("base_link", "link6", chain); // 提取运动链（从基座到末端的关节-连杆顺序）
+    if (!kdl_parser::treeFromString(urdf_xml, tree)) {
+        RCLCPP_ERROR(get_node()->get_logger(), "URDF 解析失败，无法构建 KDL 树");
+        return controller_interface::CallbackReturn::ERROR;
+    }
+    if (!tree.getChain("base_link", "link6", chain)) {
+        RCLCPP_ERROR(get_node()->get_logger(), "KDL 链提取失败: base_link -> link6");
+        return controller_interface::CallbackReturn::ERROR;
+    }
+
+    kdl_dof_ = chain.getNrOfJoints();
+    if (kdl_dof_ == 0) {
+        RCLCPP_ERROR(get_node()->get_logger(), "KDL 链关节数为 0，无法进行动力学计算");
+        return controller_interface::CallbackReturn::ERROR;
+    }
+
+    q_kdl.resize(kdl_dof_);
+    dq_kdl.resize(kdl_dof_);
+    ddq_kdl.resize(kdl_dof_);
+    C_kdl.resize(kdl_dof_);
+    M_kdl.resize(kdl_dof_);
+    G_kdl.resize(kdl_dof_);
+    q_dot_.resize(kdl_dof_);
+
+    if (kdl_dof_ != joint_names_.size()) {
+        RCLCPP_WARN(
+            get_node()->get_logger(),
+            "KDL DoF(%zu) 与控制器关节数(%zu)不一致，将按最小维度计算动力学",
+            kdl_dof_,
+            joint_names_.size()
+        );
+    }
 
     // 设置重力
     gravity.x(0.0);
@@ -248,34 +327,46 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
         return controller_interface::return_type::OK;
     }
 
-    if (UseMoveit) {
-        // 五次多项式插值计算输出
-        // get_target 读取当前播放位置
-        bool ret = continue_trajectory.get_target(time, output_state);
 
-        // 填充 KDL 数据结构
-        for (size_t i = 0; i < joint_names_.size(); i++) // 填写轨迹位置/速度/加速度信息
-        {
-            q_kdl(i)   = output_state.positions[i];
-            dq_kdl(i)  = output_state.velocities[i];
-            ddq_kdl(i) = output_state.accelerations[i];
-        }
-    } else {
-        // use velocity control, 直接把速度命令写入接口
 
-        while(rclcpp::ok()){
-            rclcpp::Rate(10).sleep();
-            if (cancle_execut) {
-                cancle_execut = false;
-                break;
-            }
 
-            for(size_t i = 0 ; i < joint_names_.size(); ++i){
-                dq_kdl(i) = q_dot_(i);      // Read joint velocity command from q_dot_
-                ddq_kdl(i) = 0.0;           // No acceleration in velocity control mode
-            }
-        }
-    };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    (void)period;
+    bool ret = true;
+    const size_t controlled_dof = std::min(joint_names_.size(), kdl_dof_);
+    if (controlled_dof == 0) {
+        return controller_interface::return_type::ERROR;
+    }
+    const bool use_moveit = UseMoveit.load(std::memory_order_relaxed);
+
+
+    // 五次多项式插值计算输出
+    // get_target 读取当前播放位置
+    ret = continue_trajectory.get_target(time, output_state);
+
+    // 填充 KDL 数据结构
+    for (size_t i = 0; i < controlled_dof; i++) // 填写轨迹位置/速度/加速度信息
+    {
+        q_kdl(i)   = output_state.positions[i];
+        dq_kdl(i)  = output_state.velocities[i];
+        ddq_kdl(i) = output_state.accelerations[i];
+    }
+
 
 
 
@@ -288,15 +379,24 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
 
 
     // 动力学计算
-    Eigen::Vector<double, 6> torque = dynamicCalc(); // 计算力矩前馈值，计算所需力矩大小
+    Eigen::VectorXd torque = dynamicCalc(); // 计算力矩前馈值，计算所需力矩大小
 
     for (size_t i = 0; i < joint_names_.size(); i++) // 将计算结果写入硬件层
     {
-        command_interfaces_[i * 3 + 0].set_value(q_kdl(i));         // 写入位置
-        command_interfaces_[i * 3 + 1].set_value(dq_kdl(i));        // 写入速度
-        command_interfaces_[i * 3 + 2].set_value(torque(i)); // 写入力矩
+        const double pos = (i < controlled_dof) ? q_kdl(i) : 0.0;
+        const double vel = (i < controlled_dof) ? dq_kdl(i) : 0.0;
+        const double eff = (i < static_cast<size_t>(torque.size())) ? torque(static_cast<Eigen::Index>(i)) : 0.0;
+        command_interfaces_[i * 3 + 0].set_value(pos);         // 写入位置
+        command_interfaces_[i * 3 + 1].set_value(vel);        // 写入速度
+        command_interfaces_[i * 3 + 2].set_value(eff); // 写入力矩
     }
 
+
+    auto goal_handle = activate_goal_handle_;
+    if (!goal_handle) {
+        is_execut_trajectory = false;
+        return controller_interface::return_type::OK;
+    }
 
     // TODO:实时反馈
     feedback_msg->joint_names        = joint_names_;
@@ -306,16 +406,35 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
         feedback_msg->actual.positions[i]  = state_interfaces_[i * 2 + 0].get_value();
         feedback_msg->actual.velocities[i] = state_interfaces_[i * 2 + 1].get_value();
     }
+    
     feedback_msg->header.stamp = get_node()->now();
-    activate_goal_handle_->publish_feedback(feedback_msg);
 
-    // // 通知轨迹完成
-    // if (!ret) { // 如果这点是最后一个点，那么发送完成状态
-    //     is_execut_trajectory     = false;
-    //     result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
-    //     result_msg->error_string = "Trajectory finished";
-    //     activate_goal_handle_->succeed(result_msg);
-    // }
+    if (goal_handle->is_active()) {
+        try {
+            goal_handle->publish_feedback(feedback_msg);
+        } catch (const std::exception& e) {
+            RCLCPP_WARN(this->get_node()->get_logger(), "publish_feedback failed: %s", e.what());
+            is_execut_trajectory = false;
+            activate_goal_handle_.reset();
+            return controller_interface::return_type::ERROR;
+        }
+    }
+
+    // 通知轨迹完成（仅 MoveIt 轨迹模式）
+    if (use_moveit && !ret) { // 如果这点是最后一个点，那么发送完成状态
+        is_execut_trajectory     = false;
+        result_msg->error_code   = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
+        result_msg->error_string = "Trajectory finished";
+        auto done_handle = activate_goal_handle_;
+        activate_goal_handle_.reset();
+        if (done_handle && done_handle->is_active()) {
+            try {
+                done_handle->succeed(result_msg);
+            } catch (const std::exception& e) {
+                RCLCPP_WARN(this->get_node()->get_logger(), "succeed failed: %s", e.what());
+            }
+        }
+    }
 
     // RCLCPP_INFO(this->get_node()->get_logger(), "控制器更新");
     return controller_interface::return_type::OK;
@@ -352,8 +471,10 @@ rclcpp_action::GoalResponse MixController::handle_goal(
     const rclcpp_action::GoalUUID& uuid, // 目标唯一标识符
     const std::shared_ptr<const control_msgs::action::FollowJointTrajectory::Goal> goal // 目标内容
 ) {
+    (void)uuid;
+
     // 如果正在执行其他轨迹，拒绝新目标
-    if (is_execut_trajectory)
+    if (is_execut_trajectory || (activate_goal_handle_ && activate_goal_handle_->is_active()))
         return rclcpp_action::GoalResponse::REJECT;
 
     // 重置取消执行
@@ -370,14 +491,23 @@ rclcpp_action::GoalResponse MixController::handle_goal(
 // 处理轨迹取消请求
 rclcpp_action::CancelResponse
     MixController::handle_cancel(const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle) {
-    // 标记未使用的参数
-    (void)goal_handle;
-
     // 停止轨迹执行
     is_execut_trajectory = false;
 
     // 标记已取消
     cancle_execut        = true;
+
+    if (goal_handle && goal_handle->is_active()) {
+        auto cancel_result = std::make_shared<control_msgs::action::FollowJointTrajectory::Result>();
+        cancel_result->error_code = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
+        cancel_result->error_string = "Trajectory canceled";
+        try {
+            goal_handle->canceled(cancel_result);
+        } catch (const std::exception& e) {
+            RCLCPP_WARN(this->get_node()->get_logger(), "canceled() failed: %s", e.what());
+        }
+    }
+    activate_goal_handle_.reset();
 
     // 接受取消请求
     return rclcpp_action::CancelResponse::ACCEPT;
@@ -400,27 +530,42 @@ void MixController::handle_accepted(const std::shared_ptr<rclcpp_action::ServerG
 }
 
 // 计算机器人动力学，计算前馈力矩
-Eigen::Vector<double, 6> MixController::dynamicCalc() {
+Eigen::VectorXd MixController::dynamicCalc() {
+    const Eigen::Index tau_size = static_cast<Eigen::Index>(joint_names_.size());
+    Eigen::VectorXd tau = Eigen::VectorXd::Zero(tau_size);
+    const size_t dof = kdl_dof_;
+    if (!dyn || dof == 0) {
+        return tau;
+    }
+
     // 5. 调用 KDL 动力学函数
     dyn->JntToMass(q_kdl, M_kdl); // 计算惯性矩阵
     dyn->JntToCoriolis(q_kdl, dq_kdl, C_kdl); // 计算科里奥利力
     dyn->JntToGravity(q_kdl, G_kdl); // 计算重力
 
     // 6. 转换 KDL 输出到 Eigen，方便矩阵运算
-    Eigen::Matrix<double, 6, 6> M_mat; // 惯性矩阵
-    Eigen::Matrix<double, 6, 1> C, G, ddq; // 向量
+    const Eigen::Index dof_idx = static_cast<Eigen::Index>(dof);
+    Eigen::MatrixXd M_mat = Eigen::MatrixXd::Zero(dof_idx, dof_idx); // 惯性矩阵
+    Eigen::VectorXd C = Eigen::VectorXd::Zero(dof_idx);
+    Eigen::VectorXd G = Eigen::VectorXd::Zero(dof_idx);
+    Eigen::VectorXd ddq = Eigen::VectorXd::Zero(dof_idx);
 
-    for (int i = 0; i < 6; ++i) {
-        C(i)   = C_kdl(i); // 科里奥利力
-        G(i)   = G_kdl(i); // 重力
-        ddq(i) = ddq_kdl(i); // 加速度
-        for (int j = 0; j < 6; ++j) {
-            M_mat(i, j) = M_kdl(i, j); // 惯性矩阵元素
+    for (Eigen::Index i = 0; i < dof_idx; ++i) {
+        C(i)   = C_kdl(static_cast<unsigned int>(i)); // 科里奥利力
+        G(i)   = G_kdl(static_cast<unsigned int>(i)); // 重力
+        ddq(i) = ddq_kdl(static_cast<unsigned int>(i)); // 加速度
+        for (Eigen::Index j = 0; j < dof_idx; ++j) {
+            M_mat(i, j) = M_kdl(static_cast<unsigned int>(i), static_cast<unsigned int>(j)); // 惯性矩阵元素
         }
     }
     // 7. 计算前馈力矩 tau
     // 计算前馈力矩：τ = M·ddq + C + G
-    return (M_mat * ddq + C + G);
+    Eigen::VectorXd tau_dyn = (M_mat * ddq + C + G);
+    const size_t n = std::min(static_cast<size_t>(tau_dyn.size()), joint_names_.size());
+    for (size_t i = 0; i < n; ++i) {
+        tau(static_cast<Eigen::Index>(i)) = tau_dyn(static_cast<Eigen::Index>(i));
+    }
+    return tau;
 }
 
 

@@ -107,7 +107,7 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
 
     cur_pub_cnt++;
     if (cur_pub_cnt == publish_cnt) {
-        RCLCPP_INFO(this->get_logger(), "发布电机状态");
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 50, "发布电机状态");
         cur_pub_cnt = 0;
     }
 }
@@ -122,7 +122,14 @@ void SerialNode::legsSubscribCb(const robot_interfaces::msg::Arm& msg) {
 
     cur_sub_cnt++;
     if (cur_sub_cnt == subscrib_cnt) {
-        RCLCPP_INFO(this->get_logger(), "订阅到电机目标值,joint2.torque=%lf,omega=%lf", msg.joints[1].torque,msg.joints[1].omega);
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            50,
+            "订阅到电机目标值,joint2.torque=%lf,omega=%lf",
+            msg.joints[1].torque,
+            msg.joints[1].omega
+        );
         cur_sub_cnt = 0;
     }
 }

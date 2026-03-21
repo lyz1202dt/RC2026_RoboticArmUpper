@@ -16,6 +16,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <geometry_msgs/msg/pose.hpp>
 #include <robot_interfaces/msg/arm.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
@@ -29,14 +30,26 @@
 #include <rclcpp_action/create_client.hpp>
 #include <robot_interfaces/action/catch.hpp>
 
-#include <thread>
-#include <memory>
-#include <atomic>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <trajectory_msgs/msg/detail/joint_trajectory__struct.hpp>
-#include <vector>
+#include <kdl/chain.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl_parser/kdl_parser.hpp>
+#include <kdl/chainjnttojacsolver.hpp>
+#include <kdl/chainjnttojacdotsolver.hpp>
+#include <kdl/chainiksolvervel_pinv.hpp>
+#include <kdl/chainiksolverpos_lma.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 
+
+// 轨迹点结构体
+struct TrajectoryPoint {
+    geometry_msgs::msg::PoseStamped pose;      // 位置和朝向
+    geometry_msgs::msg::Twist velocity;        // 速度
+    geometry_msgs::msg::Twist acceleration;    // 加速度
+    rclcpp::Time timestamp;                    // 时间戳
+};
 
 class VisualServoingArmHandleNode {
 public:
@@ -64,73 +77,78 @@ private:
     // calculate twist
     geometry_msgs::msg::Twist CalculateTwist(Eigen::Vector3d& path_vector);
 
+    // calculate target orientation from path vector
+    Eigen::Quaterniond CalculateTargetOrientation(const Eigen::Vector3d& path_vector);
+
     // send twist command
     void SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg);
 
+    // 1.当前时刻期望位置
+    // 2.最终期望位置
+    // 3.实际位置
+    // 初始化：当前期望位置 = 实际位置
+    // 当前期望速度=0
+    // 上次期望速度=0
+    // 控制周期: 
+    // 当前期望速度=（最终期望位置-当前期望位置） * kp
+    // 当前期望加速度=limit（当前期望速度-上次期望速度）/dt
+    // 当前期望速度=上次期望速度+当前期望加速度*dt
 
+    // 当前期望位位置=当前期望位位置+当前期望速度*dt
+    // 当前机械臂目标=当前期望位置/当前期望速度/当前期望加速度
 
+    geometry_msgs::msg::PoseStamped crrent_desired_position_; // 当前期望位置
+    geometry_msgs::msg::PoseStamped actual_position_; // 实际位置
+    geometry_msgs::msg::PoseStamped final_desired_position_; // 最终期望位置
     
+    TrajectoryPoint initial_trajectory_point_; // t0时刻的完整轨迹点
+    trajectory_msgs::msg::JointTrajectory initial_joint_trajectory_;
+
+    geometry_msgs::msg::Twist current_desired_velocity_; // 当前期望速度
+    geometry_msgs::msg::Twist last_desired_velocity_; // 上次期望速度
+    double kp_ = 1.0; // 比例增益
+    double dt_ = 0.01; // 控制周期
+    bool is_first_iteration_ = true; // 是否是第一次迭代
+    
+    void ComputationalSpeed();
+
+    void SendTrajectoryCommand();
+
+    // 获取t0时刻的轨迹点
+    TrajectoryPoint getInitialTrajectory() const;
+
+    void PointToTrajectoryPoint();
+
+    // KDL相关
+    KDL::Chain kdl_chain_;
+    KDL::Tree kdl_tree_;
+    std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
+    std::shared_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;
+    
+    // 关节状态
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+    KDL::JntArray current_joint_positions_;
+    std::mutex joint_state_mutex_;
+    bool joint_state_received_{false};
+    
+    // URDF参数客户端
+    rclcpp::SyncParametersClient::SharedPtr robot_description_client_;
+    
+    // 初始化KDL
+    bool initKDL();
+    
+    // 关节状态回调
+    void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+
+    int64_t duration_ns_;
+
+    double duration_sec_;
+    
+    rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr initial_joint_trajectory_publisher_;
 
 
 
 };
-
-VisualServoingArmHandleNode::VisualServoingArmHandleNode(const rclcpp::Node::SharedPtr node) : node_(node) {
-    // 初始化路径向量
-    path_vector_ = Eigen::Vector3d::Zero();
-    // 创建发布器
-    twist_publisher_ = node_->create_publisher<geometry_msgs::msg::Twist>("twist_command", 10);
-}
-
-VisualServoingArmHandleNode::~VisualServoingArmHandleNode() {
-    // TODO: 析构函数
-}
-
-Eigen::Vector3d VisualServoingArmHandleNode::CalculatePath(
-    Eigen::Vector3d& current_position, Eigen::Vector3d& target_position
-) {
-    Eigen::Vector3d path_vector_ = target_position - current_position; // 计算路径向量
-    return path_vector_;
-}
-
-geometry_msgs::msg::Twist VisualServoingArmHandleNode::CalculateTwist(Eigen::Vector3d& path_vector) {
-    geometry_msgs::msg::Twist twist_msg;
-    double max_liner_velocity = 1.0; // 最大线速度
-    double max_angular_velocity = 10.0; // 最大角速度
-
-    // 计算线速度
-    twist_msg.linear.x = path_vector.x();
-    twist_msg.linear.y = path_vector.y();
-    twist_msg.linear.z = path_vector.z();
-    double liner_velocity_magnitude = path_vector.norm(); // 计算路径向量的大小
-    if (liner_velocity_magnitude > max_liner_velocity) {
-        twist_msg.linear.x = (path_vector.x() / liner_velocity_magnitude) * max_liner_velocity;
-        twist_msg.linear.y = (path_vector.y() / liner_velocity_magnitude) * max_liner_velocity;
-        twist_msg.linear.z = (path_vector.z() / liner_velocity_magnitude) * max_liner_velocity;
-    }
-
-    // TODO: 计算角速度
-    twist_msg.angular.x = 0.0; // 这里暂时设置为0，实际应用中需要根据路径向量计算合适的角速度
-    twist_msg.angular.y = 0.0;
-    twist_msg.angular.z = 0.0;
-
-    return twist_msg;
-}
-
-void VisualServoingArmHandleNode::SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg) {
-    twist_publisher_->publish(twist_msg); // 发布Twist消息
-}
-
-void VisualServoingArmHandleNode::TotalPackaing(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position) {
-    // 计算路径向量
-    Eigen::Vector3d path_vector = CalculatePath(current_position, target_position);
-    // 计算Twist命令
-    geometry_msgs::msg::Twist twist_msg = CalculateTwist(path_vector);
-    // 发送Twist命令
-    SendTwistCommand(twist_msg);
-}
-
-
 
 
 

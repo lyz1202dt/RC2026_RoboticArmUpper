@@ -41,6 +41,7 @@ add_executable(robotic_task
   src/arm_handle_node.cpp
   src/arm_handle_node_1.cpp
   src/arm_handle_node_2.cpp
+  src/ArmHandleNodeVisualServoing.cpp
 )
 
 add_executable(arm_test

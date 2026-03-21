@@ -49,7 +49,7 @@ private:
 
         //模拟的抓取位置姿
             // 在 rviz2 中的显示为z轴方向
-        goal_msg.target_pose.position.x = 0.6;//0.664748;
+        goal_msg.target_pose.position.x = 0.0;//0.664748;
             // 在 rviz2 中的显示为y轴方向
         goal_msg.target_pose.position.y = -0.3;//-0.001824;
             // 在 rviz2 中的显示为x轴方向

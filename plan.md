@@ -197,6 +197,7 @@ void controlCycle(){
     
     // 当前机械臂目标=当前期望位置/当前期望速度/当前期望加速度
     publishArmTarget(current_expected_position_, current_expected_velocity_, current_expected_acceleration_);
+    
 }
 
 // 发布机械臂目标函数
@@ -243,7 +244,7 @@ Plan based on the target pose transmitted by the camera.
 3.末端目标朝向为向量指向的方向。
 ## 速度控制
 1.设置最大速度为 1m/s。 当速度大于最大速度时，进行速度限制。
-2.设置最大角速度为10rad/s 。当角速度大于最大角速度时，进行速度限制。
+2.设置最大角速度为10rad/s 。角速度为当前末端朝向和末端目标朝向的夹角大小,当角速度大于最大角速度时，进行速度限制。
 
 
 
@@ -261,6 +262,23 @@ Plan based on the target pose transmitted by the camera.
 
 当前期望位位置=当前期望位位置+当前期望速度*dt
 当前机械臂目标=当前期望位置/当前期望速度/当前期望加速度
+
+
+
+
+
+```cpp
+
+
+
+
+
+
+
+```
+
+
+
 ## 接口
 
 

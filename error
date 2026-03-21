@@ -1,3 +1,32 @@
-转换后目标位姿: Pos(0.540230,-0.205129,0.317940), Rot(0.000000,0.707107,-0.000000,0.707107)
+[ros2_control_node-6] [INFO] [1774060730.760002367] [robotic_arm_controller]: 接收轨迹
+[ros2_control_node-6] [INFO] [1774060730.760212624] [robotic_arm_controller]: 执行轨迹
+[move_group-3] [INFO] [1774060730.760369767] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: robotic_arm_controller started execution
+[move_group-3] [INFO] [1774060730.760380320] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Goal request accepted!
 
-计算得到的准备位置: Pos(0.540230,-0.205129,0.317940)
+
+
+[move_group-3] [WARN] [1774060736.380975806] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: waitForExecution timed out
+
+
+[move_group-3] [ERROR] [1774060736.381029090] [moveit_ros.trajectory_execution_manager]: Controller is taking too long to execute trajectory (the expected upper bound for the trajectory execution was 5.620421 seconds). Stopping trajectory.
+
+
+[move_group-3] [INFO] [1774060736.381087117] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Cancelling execution for robotic_arm_controller
+[ros2_control_node-6] [WARN] [1774060736.381518269] [robotic_arm_controller]: canceled() failed: goal_handle attempted invalid transition from state EXECUTING with event CANCELED, at ./src/rcl_action/goal_handle.c:95
+[move_group-3] [INFO] [1774060736.381858334] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: Controller 'robotic_arm_controller' successfully finished
+[move_group-3] [INFO] [1774060736.382005518] [moveit_ros.trajectory_execution_manager]: Completed trajectory execution with status TIMED_OUT ...
+[move_group-3] [INFO] [1774060736.382091656] [moveit_move_group_default_capabilities.execute_trajectory_action_capability]: Execution completed: TIMED_OUT
+[move_group-3] [INFO] [1774060736.383308096] [moveit_move_group_default_capabilities.move_action_capability]: Received request
+[move_group-3] [INFO] [1774060736.383384618] [moveit_move_group_default_capabilities.move_action_capability]: executing..
+[move_group-3] [INFO] [1774060736.389273197] [moveit_move_group_default_capabilities.move_action_capability]: Planning request received for MoveGroup action. Forwarding to planning pipeline.
+[move_group-3] [INFO] [1774060736.390115578] [moveit.ompl_planning.model_based_planning_context]: Planner configuration 'robotic_arm' will use planner 'geometric::RRTConnect'. Additional configuration parameters will be set when the planner is constructed.
+[move_group-3] [INFO] [1774060747.587849150] [moveit_move_group_default_capabilities.move_action_capability]: Motion plan was computed successfully.
+[move_group-3] [INFO] [1774060747.589530679] [moveit_move_group_default_capabilities.execute_trajectory_action_capability]: Received goal request
+[move_group-3] [INFO] [1774060747.589610993] [moveit_move_group_default_capabilities.execute_trajectory_action_capability]: Execution request received
+[move_group-3] [INFO] [1774060747.589636311] [moveit.plugins.moveit_simple_controller_manager]: Returned 1 controllers in list
+[move_group-3] [INFO] [1774060747.589651808] [moveit.plugins.moveit_simple_controller_manager]: Returned 1 controllers in list
+[move_group-3] [INFO] [1774060747.589707796] [moveit_ros.trajectory_execution_manager]: Validating trajectory with allowed_start_tolerance 0.01
+[move_group-3] [INFO] [1774060747.599125790] [moveit_ros.trajectory_execution_manager]: Starting trajectory execution ...
+[move_group-3] [INFO] [1774060747.599184681] [moveit.plugins.moveit_simple_controller_manager]: Returned 1 controllers in list
+[move_group-3] [INFO] [1774060747.599205911] [moveit.plugins.moveit_simple_controller_manager]: Returned 1 controllers in list
+[move_group-3] [INFO] [1774060747.599387722] [moveit.simple_controller_manager.follow_joint_trajectory_controller_handle]: sending trajectory to robotic_arm_controller
