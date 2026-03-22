@@ -23,6 +23,7 @@
 #include <rclcpp/utilities.hpp>
 #include <string>
 #include <tf2/LinearMath/Quaternion.hpp>
+#include <tf2/convert.hpp>
 #include <tf2_ros/transform_listener.hpp>
 #include <thread>
 #include <iostream>
@@ -44,17 +45,48 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
         std::bind(&ArmHandleNode::handle_accepted, this, std::placeholders::_1)
     );
 
+
+
+
+
+
+
+
+
+
+
+
+    camera_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
+    camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
+    tf_buffer_= std::make_shared<tf2_ros::Buffer>(node->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     vision_subscription_ = node->create_subscription<geometry_msgs::msg::PoseStamped>(
     "robotic_task_", 10,
     std::bind(&ArmHandleNode::visionCallback, this, std::placeholders::_1));
+
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
 
     // TODO: 使用伺服时，发布假。使用moveit时，发布真。
     moveit_pub_ = node->create_publisher<robot_interfaces::msg::Moveit>("moveit_command", 10);
 
 
     // 坐标变换监听
-    camera_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
-    camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
+
    
    
     move_group_interface     = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
@@ -128,8 +160,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
                             
 
     // 初始化TF2
-    tf_buffer_= std::make_shared<tf2_ros::Buffer>(node->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
 
     // 在构造函数末尾启动任务线程，避免部分成员尚未初始化时线程读取它们
     try {
@@ -180,6 +211,8 @@ rclcpp_action::GoalResponse
     goal->target_pose.position.x, goal->target_pose.position.y, goal->target_pose.position.z,
     goal->target_pose.orientation.w, goal->target_pose.orientation.x, 
     goal->target_pose.orientation.y, goal->target_pose.orientation.z);
+
+
 
     // TODO:姿态一定是大约朝前的，所以这里定死姿态
     // RCLCPP_INFO(node->get_logger(),"实际位置为(%lf,%lf,%lf)",task_target_pos.position.x,task_target_pos.position.y,task_target_pos.position.z);
@@ -539,10 +572,23 @@ void ArmHandleNode::arm_catch_task_handle() {
             robot_interfaces::msg::Moveit moveit_msg;
             moveit_msg.use_moveit = true;
             moveit_pub_->publish(moveit_msg);
-            // 以 10Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
-            rclcpp::Rate loop_rate(50.0);
-            const int max_servo_steps = 10;
-            for (int step = 0; rclcpp::ok() && step < max_servo_steps; ++step) {
+            // 以 100Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
+            rclcpp::Rate loop_rate(100.0);
+
+            Eigen::Vector3d distance_end_to_target_{
+                grasp_pose.position.x - task_target_pos.position.x,
+                grasp_pose.position.y - task_target_pos.position.y,
+                grasp_pose.position.z - task_target_pos.position.z
+            };
+
+
+
+
+
+
+
+
+            while (rclcpp::ok() ) {
                 if (cancle_current_task) {
                     RCLCPP_WARN(node->get_logger(), "视觉伺服被取消");
                     break;

@@ -286,3 +286,144 @@ Plan based on the target pose transmitted by the camera.
 
 速度大小为向量大小，
 角速度大小为当前末端朝向和目标末端朝向的夹角大小，
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 关于和相机通信
+### @arm_handle_node 
+```cpp
+geometry_msgs::msg::Pose task_target_pos; // 目标位置
+
+
+
+
+geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose, ApproachMode mode = ApproachMode::AUTO);
+
+geometry_msgs::msg::Pose detected_target_pose_; // 从视觉系统获取的目标位姿
+geometry_msgs::msg::Pose detected_target_pose_on_base_link_; // 转换到base_link坐标系下的目标位姿
+geometry_msgs::msg::Pose available_target_pose_;
+
+
+std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer; // 坐标变换
+std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
+geometry_msgs::msg::TransformStamped camera_link0_tf;
+std::shared_ptr<tf2_ros::Buffer> tf_buffer_; // 坐标系变换
+std::shared_ptr<tf2_ros::TransformListener> tf_listener_; // 接收和订阅坐标变换消息
+
+
+
+
+
+
+
+
+
+
+
+
+// TODO: 真正的相机返回判断条件
+// 回调函数
+void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+
+    if (!rclcpp::ok()) {
+        return;
+    }
+
+    if (msg == nullptr) {
+        RCLCPP_WARN(node->get_logger(), "警告：接收到空的视觉消息，拒绝机械臂目标请求");
+        return;
+    }
+
+    // 先只做状态判断和数据拷贝，锁尽量短
+    {
+
+    }
+
+
+
+
+
+
+
+    std::lock_guard<std::mutex> lock(vision_target_mutex_);
+    if (msg->header.frame_id == "available_target") { // 假设相机发布的消息中，header.frame_id 用于区分目标是否可用
+        detected_target_pose_ = msg->pose;
+        available_target_pose_ = detected_target_pose_;
+        has_vision_target_ = true;
+    } else if (msg->header.frame_id == "unavailable_target") {
+        detected_target_pose_ = available_target_pose_;
+        has_vision_target_ = true;
+    }
+
+
+
+
+    // TODO: 在订阅者的回调函数里进行TF变换，将detected_target_pose_转换到base_link坐标系下，存储在detected_target_pose_on_base_link_中
+
+    try {
+        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
+    } catch (const tf2::TransformException& ex) { 
+        RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
+    }
+
+    tf2::doTransform(detected_target_pose_, detected_target_pose_on_base_link_, camera_link0_tf);
+    RCLCPP_INFO(node->get_logger(), "原始目标位姿: Pos(%lf,%lf,%lf), Rot(%lf,%lf,%lf,%lf)",
+    detected_target_pose_on_base_link_.position.x, detected_target_pose_on_base_link_.position.y, detected_target_pose_on_base_link_.position.z,
+    detected_target_pose_on_base_link_.orientation.w, detected_target_pose_on_base_link_.orientation.x, 
+    detected_target_pose_on_base_link_.orientation.y, detected_target_pose_on_base_link_.orientation.z);
+
+
+    auto qin=detected_target_pose_on_base_link_.orientation;
+    tf2::Quaternion q(qin.x, qin.y, qin.z, qin.w);
+    q.normalize();
+    detected_target_pose_on_base_link_.orientation.w = q.w();
+    detected_target_pose_on_base_link_.orientation.x = q.x();
+    detected_target_pose_on_base_link_.orientation.y = q.y();
+    detected_target_pose_on_base_link_.orientation.z = q.z();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+

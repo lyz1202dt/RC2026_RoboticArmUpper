@@ -182,13 +182,14 @@ private:
     std::mutex vision_target_mutex_;
     bool has_vision_target_{false};
 
-    geometry_msgs::msg::Pose detected_target_pose_;
+    geometry_msgs::msg::Pose detected_target_pose_; // 从视觉系统获取的目标位姿
+    geometry_msgs::msg::Pose detected_target_pose_on_base_link_; // 转换到base_link坐标系下的目标位姿
     geometry_msgs::msg::Pose available_target_pose_;
 
     // TODO: 真正的相机返回判断条件
     void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
         std::lock_guard<std::mutex> lock(vision_target_mutex_);
-        if (msg->header.frame_id == "available_target") {
+        if (msg->header.frame_id == "available_target") { // 假设相机发布的消息中，header.frame_id 用于区分目标是否可用
             detected_target_pose_ = msg->pose;
             available_target_pose_ = detected_target_pose_;
             has_vision_target_ = true;
