@@ -187,17 +187,7 @@ private:
     geometry_msgs::msg::Pose available_target_pose_;
 
     // TODO: 真正的相机返回判断条件
-    void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-        std::lock_guard<std::mutex> lock(vision_target_mutex_);
-        if (msg->header.frame_id == "available_target") { // 假设相机发布的消息中，header.frame_id 用于区分目标是否可用
-            detected_target_pose_ = msg->pose;
-            available_target_pose_ = detected_target_pose_;
-            has_vision_target_ = true;
-        } else if (msg->header.frame_id == "unavailable_target") {
-            detected_target_pose_ = available_target_pose_;
-            has_vision_target_ = true;
-        }
-    }
+    void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
     rclcpp::Publisher<robot_interfaces::msg::Moveit>::SharedPtr moveit_pub_;
 

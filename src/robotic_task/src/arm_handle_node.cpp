@@ -74,7 +74,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
 
 
 
-    
+
 
 
 
@@ -573,22 +573,30 @@ void ArmHandleNode::arm_catch_task_handle() {
             moveit_msg.use_moveit = true;
             moveit_pub_->publish(moveit_msg);
             // 以 100Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
-            rclcpp::Rate loop_rate(100.0);
+            rclcpp::Rate loop_rate(100.0); // 100Hz
 
-            Eigen::Vector3d distance_end_to_target_{
-                grasp_pose.position.x - task_target_pos.position.x,
-                grasp_pose.position.y - task_target_pos.position.y,
-                grasp_pose.position.z - task_target_pos.position.z
+            auto calculate_distance_to_target = [this](const geometry_msgs::msg::PoseStamped& pose) {
+                const Eigen::Vector3d current_position(
+                    pose.pose.position.x,
+                    pose.pose.position.y,
+                    pose.pose.position.z
+                );
+                const Eigen::Vector3d target_position(
+                    detected_target_pose_on_base_link_.position.x,
+                    detected_target_pose_on_base_link_.position.y,
+                    detected_target_pose_on_base_link_.position.z
+                );
+                return (target_position - current_position).norm();
             };
 
+            double distance_ = calculate_distance_to_target(current_pose);
 
 
 
 
 
 
-
-            while (rclcpp::ok() ) {
+            while (rclcpp::ok() && distance_ > SWITCH_DISTANCE_THRESHOLD) { // 当末端与目标的距离大于阈值时持续进行视觉伺服调整
                 if (cancle_current_task) {
                     RCLCPP_WARN(node->get_logger(), "视觉伺服被取消");
                     break;
@@ -635,7 +643,15 @@ void ArmHandleNode::arm_catch_task_handle() {
 
                 visual_servoing_handler_.TotalPackaing(current_pose_eigen, final_desired_position_eigen, current_pose_now, final_desired_position);
                 
-                
+
+                current_pose = move_group_interface->getCurrentPose(); // 获取当前末端位姿
+
+                distance_ = calculate_distance_to_target(current_pose);
+
+                RCLCPP_INFO(node->get_logger(), "当前末端位置: (%.3f, %.3f, %.3f), 目标位置: (%.3f, %.3f, %.3f), 距离: %.3f",
+                    current_pose.pose.position.x, current_pose.pose.position.y, current_pose.pose.position.z,
+                    detected_target_pose_on_base_link_.position.x, detected_target_pose_on_base_link_.position.y, detected_target_pose_on_base_link_.position.z,
+                    distance_); 
                 
                 loop_rate.sleep();
             }
@@ -1245,3 +1261,125 @@ void ArmHandleNode::arm_catch_task_handle() {
     }
     RCLCPP_INFO(node->get_logger(), "退出机械臂任务处理线程");
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+    if (!rclcpp::ok()) {
+        return;
+    }
+
+    if (!msg) {
+        RCLCPP_WARN(node->get_logger(), "警告：接收到空的视觉消息");
+        return;
+    }
+
+    geometry_msgs::msg::Pose pose_in_camera;
+    bool candidate_valid = false;
+
+    // 第一段短锁：读取/更新共享缓存（不做耗时TF）
+    {
+        std::lock_guard<std::mutex> lock(vision_target_mutex_);
+
+        // 你当前把 frame_id 当状态字段使用：available_target / unavailable_target
+        if (msg->header.frame_id == "available_target") {
+            pose_in_camera = msg->pose;
+            available_target_pose_ = pose_in_camera;
+            candidate_valid = true;
+        } else if (msg->header.frame_id == "unavailable_target") {
+            if (has_vision_target_) {
+                pose_in_camera = available_target_pose_;
+                candidate_valid = true;
+            } else {
+                RCLCPP_WARN(node->get_logger(), "警告：无可用视觉目标且无历史缓存");
+                return;
+            }
+        }
+    }
+
+    if (!candidate_valid) {
+        RCLCPP_WARN(node->get_logger(), "警告：视觉消息状态无效");
+        return;
+    }
+
+    // 锁外做TF，避免阻塞读线程
+    geometry_msgs::msg::Pose transformed_pose;
+    try {
+        // 若消息时间戳无效，则退化为当前时刻
+        rclcpp::Time query_stamp = msg->header.stamp;
+        if (query_stamp.nanoseconds() == 0) {
+            query_stamp = node->now();
+        }
+
+        auto tf = camera_link0_tf_buffer->lookupTransform(
+            "base_link",
+            "camera_link",
+            query_stamp,
+            tf2::durationFromSec(0.02)
+        );
+
+        tf2::doTransform(pose_in_camera, transformed_pose, tf);
+    } catch (const tf2::TransformException &ex) {
+        RCLCPP_WARN(node->get_logger(), "警告：TF变换失败: %s", ex.what());
+        return;
+    }
+
+    // 四元数归一化（防止非单位四元数）
+    tf2::Quaternion q(
+        transformed_pose.orientation.x,
+        transformed_pose.orientation.y,
+        transformed_pose.orientation.z,
+        transformed_pose.orientation.w
+    );
+
+    if (q.length2() > 1e-12) {
+        q.normalize();
+        transformed_pose.orientation.x = q.x();
+        transformed_pose.orientation.y = q.y();
+        transformed_pose.orientation.z = q.z();
+        transformed_pose.orientation.w = q.w();
+    }
+
+    // 第二段短锁：一次性发布共享结果
+    {
+        std::lock_guard<std::mutex> lock(vision_target_mutex_);
+        detected_target_pose_ = pose_in_camera;
+        detected_target_pose_on_base_link_ = transformed_pose;
+        has_vision_target_ = true;
+    }
+
+    RCLCPP_INFO(
+        node->get_logger(),
+        "视觉目标更新(base_link): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
+        transformed_pose.position.x,
+        transformed_pose.position.y,
+        transformed_pose.position.z,
+        transformed_pose.orientation.w,
+        transformed_pose.orientation.x,
+        transformed_pose.orientation.y,
+        transformed_pose.orientation.z
+    );
+}
+
+
+
+

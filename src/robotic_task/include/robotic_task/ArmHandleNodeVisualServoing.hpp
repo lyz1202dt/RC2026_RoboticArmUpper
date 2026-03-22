@@ -62,6 +62,9 @@ public:
         Eigen::Vector3d& current_position, Eigen::Vector3d& target_position,
         geometry_msgs::msg::PoseStamped& actual_position, geometry_msgs::msg::PoseStamped& final_desired_position);
 
+        // calculate path vector
+    Eigen::Vector3d CalculatePath(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
+
 private:
     // current 
     geometry_msgs::msg::PoseStamped CurrentPose_;
@@ -73,8 +76,7 @@ private:
 
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_;
 
-    // calculate path vector
-    Eigen::Vector3d CalculatePath(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
+
 
     // calculate twist
     geometry_msgs::msg::Twist CalculateTwist(Eigen::Vector3d& path_vector);
