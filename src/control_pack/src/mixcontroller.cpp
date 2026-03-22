@@ -146,8 +146,21 @@ void ContinuousTrajectory::set_trajectory(const trajectory_msgs::msg::JointTraje
 
 // 创建一个 ROS 2 节点，用于获取机器人参数
 MixController::MixController() { 
-    param_node = std::make_shared<rclcpp::Node>("param_node"); 
-    twist_subscriber_ = param_node->create_subscription<geometry_msgs::msg::Twist>(
+    // 注意：订阅在 on_init() 中创建，而不是在构造函数中
+    // 这样可以确保订阅使用的是控制器的节点
+}
+
+// 控制器初始化：创建 Action 服务器、分配内存、准备数据结构
+controller_interface::CallbackReturn MixController::on_init() {
+
+    // get_node(), 获取ros2节点指针
+    RCLCPP_INFO(this->get_node()->get_logger(), "混合控制器初始化");
+
+    // 专用于参数查询的独立节点，避免在已托管控制器节点上触发 executor 冲突
+    param_query_node_ = std::make_shared<rclcpp::Node>("robotic_arm_controller_param_client");
+
+    // 创建订阅（在 on_init 时创建，确保使用控制器的节点和 executor）
+    twist_subscriber_ = this->get_node()->create_subscription<geometry_msgs::msg::Twist>(
         "twist_command", 10, 
         [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
             // 处理接收到的 Twist 消息
@@ -187,48 +200,58 @@ MixController::MixController() {
             }
         });
 
-        initial_joint_trajectory_subscriber_ = param_node->create_subscription<trajectory_msgs::msg::JointTrajectory>(
-            "initial_joint_trajectory", 10,
-            [this](const trajectory_msgs::msg::JointTrajectory::SharedPtr msg) {
-                RCLCPP_DEBUG_THROTTLE(
-                    this->param_node->get_logger(),
-                    *this->param_node->get_clock(),
-                    2000,
-                    "Received initial joint trajectory"
-                );
+    initial_joint_trajectory_subscriber_ = this->get_node()->create_subscription<trajectory_msgs::msg::JointTrajectory>(
+        "initial_joint_trajectory", 10,
+        [this](const trajectory_msgs::msg::JointTrajectory::SharedPtr msg) {
+            RCLCPP_INFO(
+                this->get_node()->get_logger(),
+                "[接收到轨迹消息] header.stamp=(sec=%d, nsec=%u), joint_names.size=%zu, points.size=%zu",
+                static_cast<int>(msg->header.stamp.sec),
+                static_cast<unsigned int>(msg->header.stamp.nanosec),
+                msg->joint_names.size(),
+                msg->points.size()
+            );
 
-                // 检查轨迹点是否有效
-                if (msg->points.empty()) {
-                    RCLCPP_WARN(this->param_node->get_logger(), "Received empty trajectory");
-                    return;
-                }
-
-                // 存储实时目标点
-                {
-                    std::lock_guard<std::mutex> lock(realtime_target_mutex_);
-                    realtime_target_ = msg->points[0];
-                }
-
-                // 设置实时流模式标志
-                is_realtime_stream_.store(true, std::memory_order_relaxed);
-
-                RCLCPP_DEBUG(
-                    this->param_node->get_logger(),
-                    "Realtime stream target: pos[0]=%.4f, vel[0]=%.4f, acc[0]=%.4f",
-                    realtime_target_.positions.size() > 0 ? realtime_target_.positions[0] : 0.0,
-                    realtime_target_.velocities.size() > 0 ? realtime_target_.velocities[0] : 0.0,
-                    realtime_target_.accelerations.size() > 0 ? realtime_target_.accelerations[0] : 0.0
-                );
+            // 检查轨迹点是否有效
+            if (msg->points.empty()) {
+                RCLCPP_WARN(this->get_node()->get_logger(), "Received empty trajectory");
+                return;
             }
-        );
 
-}
+            // 存储实时目标点
+            {
+                std::lock_guard<std::mutex> lock(realtime_target_mutex_);
+                realtime_target_ = msg->points[0];
+                
+                // 验证接收到的数据
+                RCLCPP_INFO(
+                    this->get_node()->get_logger(),
+                    "[接收数据验证] positions.size=%zu, velocities.size=%zu, accelerations.size=%zu",
+                    msg->points[0].positions.size(),
+                    msg->points[0].velocities.size(),
+                    msg->points[0].accelerations.size()
+                );
+                
+                // 打印前3个位置和速度数据
+                if (!msg->points[0].positions.empty()) {
+                    RCLCPP_INFO(
+                        this->get_node()->get_logger(),
+                        "[接收数据示例] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
+                        msg->points[0].positions[0],
+                        msg->points[0].positions.size() > 1 ? msg->points[0].positions[1] : 0.0,
+                        msg->points[0].positions.size() > 2 ? msg->points[0].positions[2] : 0.0,
+                        msg->points[0].velocities.size() > 0 ? msg->points[0].velocities[0] : 0.0,
+                        msg->points[0].velocities.size() > 1 ? msg->points[0].velocities[1] : 0.0,
+                        msg->points[0].velocities.size() > 2 ? msg->points[0].velocities[2] : 0.0
+                    );
+                }
+            }
 
-// 控制器初始化：创建 Action 服务器、分配内存、准备数据结构
-controller_interface::CallbackReturn MixController::on_init() {
-
-    // get_node(), 获取ros2节点指针
-    RCLCPP_INFO(this->get_node()->get_logger(), "混合控制器初始化");
+            // 设置实时流模式标志
+            is_realtime_stream_.store(true, std::memory_order_relaxed);
+            RCLCPP_INFO(this->get_node()->get_logger(), "已设置实时流模式标志");
+        }
+    );
 
     // 作用：创建一个服务器，接收轨迹命令
     trajectory_action_server_ = rclcpp_action::create_server<control_msgs::action::FollowJointTrajectory>(
@@ -284,8 +307,18 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     // TODO:加载并解析URDF
     RCLCPP_INFO(get_node()->get_logger(), "尝试解析URDF");
 
+    if (!param_query_node_) {
+        RCLCPP_ERROR(get_node()->get_logger(), "参数查询节点未初始化");
+        return controller_interface::CallbackReturn::ERROR;
+    }
+
     // 参数客户端
-    robot_description_param_ = std::make_shared<rclcpp::SyncParametersClient>(param_node, "/robot_state_publisher");
+    robot_description_param_ = std::make_shared<rclcpp::SyncParametersClient>(param_query_node_, "/robot_state_publisher");
+
+    if (!robot_description_param_->wait_for_service(std::chrono::seconds(2))) {
+        RCLCPP_ERROR(get_node()->get_logger(), "参数服务 /robot_state_publisher 不可用");
+        return controller_interface::CallbackReturn::ERROR;
+    }
 
     // 获取urdf
     auto params = robot_description_param_->get_parameters({"robot_description"});
@@ -408,11 +441,19 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             target = realtime_target_;
         }
 
+        // 验证接收到的数据大小
+        RCLCPP_DEBUG(this->get_node()->get_logger(), 
+            "[Update] realtime_target_: pos.size=%zu, vel.size=%zu, acc.size=%zu",
+            target.positions.size(), target.velocities.size(), target.accelerations.size());
+
         // 填充 KDL 数据结构
         for (size_t i = 0; i < controlled_dof; i++) {
             q_kdl(i)   = (i < target.positions.size()) ? target.positions[i] : 0.0;
             dq_kdl(i)  = (i < target.velocities.size()) ? target.velocities[i] : 0.0;
             ddq_kdl(i) = (i < target.accelerations.size()) ? target.accelerations[i] : 0.0;
+            std::cout << "[DEBUG] q_kdl(" << i << ") = " << q_kdl(i) << std::endl;
+            std::cout << "[DEBUG] dq_kdl(" << i << ") = " << dq_kdl(i) << std::endl;
+            std::cout << "[DEBUG] ddq_kdl(" << i << ") = " << ddq_kdl(i) << std::endl;
         }
 
         // 动力学计算
@@ -426,6 +467,10 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             command_interfaces_[i * 3 + 0].set_value(pos);
             command_interfaces_[i * 3 + 1].set_value(vel);
             command_interfaces_[i * 3 + 2].set_value(eff);
+            std::cout << "[DEBUG] pos(" << i << ") = " << pos << std::endl;
+            std::cout << "[DEBUG] vel(" << i << ") = " << vel << std::endl;
+            std::cout << "[DEBUG] eff(" << i << ") = " << eff << std::endl;
+            std::cout << "[DEBUG] ====================" << std::endl;
         }
 
         return controller_interface::return_type::OK;

@@ -180,6 +180,40 @@ void VisualServoingArmHandleNode::SendTwistCommand(const geometry_msgs::msg::Twi
 }
 
 void VisualServoingArmHandleNode::SendTrajectoryCommand() {
+    // 验证消息数据完整性
+    if (initial_joint_trajectory_.points.empty()) {
+        RCLCPP_WARN(node_->get_logger(), "[WARNING] 轨迹消息为空！");
+        return;
+    }
+    
+    // 确保消息头被正确设置
+    if (initial_joint_trajectory_.header.stamp.sec == 0 && initial_joint_trajectory_.header.stamp.nanosec == 0) {
+        initial_joint_trajectory_.header.stamp = node_->get_clock()->now();
+        RCLCPP_WARN(node_->get_logger(), "[WARNING] 轨迹消息header未初始化，已重新设置");
+    }
+    
+    std::cout << "[DEBUG] 发送关节轨迹命令: header.stamp=(" << initial_joint_trajectory_.header.stamp.sec 
+              << "." << initial_joint_trajectory_.header.stamp.nanosec << "), positions=[";
+    for (size_t i = 0; i < initial_joint_trajectory_.points[0].positions.size(); ++i) {
+        std::cout << initial_joint_trajectory_.points[0].positions[i];
+        if (i != initial_joint_trajectory_.points[0].positions.size() - 1) std::cout << ", ";
+    }
+    std::cout << "], velocities=[";
+    for (size_t i = 0; i < initial_joint_trajectory_.points[0].velocities.size(); ++i) {
+        std::cout << initial_joint_trajectory_.points[0].velocities[i];
+        if (i != initial_joint_trajectory_.points[0].velocities.size() - 1) std::cout << ", ";
+    }   
+    std::cout << "], accelerations=[";
+    for (size_t i = 0; i < initial_joint_trajectory_.points[0].accelerations.size(); ++i) {
+        std::cout << initial_joint_trajectory_.points[0].accelerations[i];
+        if (i != initial_joint_trajectory_.points[0].accelerations.size() - 1) std::cout << ", ";
+    }
+    std::cout << "]" << std::endl;
+    
+    RCLCPP_DEBUG(node_->get_logger(), "Publishing trajectory: joint_names.size=%zu, points.size=%zu, first_pos.size=%zu",
+        initial_joint_trajectory_.joint_names.size(),
+        initial_joint_trajectory_.points.size(),
+        initial_joint_trajectory_.points[0].positions.size());
     initial_joint_trajectory_publisher_->publish(initial_joint_trajectory_);
 }
 
@@ -559,6 +593,10 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     initial_joint_trajectory_.joint_names = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
     initial_joint_trajectory_.points.resize(1);
     
+    // 设置消息头（关键！）
+    initial_joint_trajectory_.header.stamp = node_->get_clock()->now();
+    initial_joint_trajectory_.header.frame_id = "base_link";
+    
     auto& point = initial_joint_trajectory_.points[0];
     point.positions.resize(6);
     point.velocities.resize(6);
@@ -572,7 +610,10 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     point.effort.clear();
     point.time_from_start = rclcpp::Duration::from_seconds(dt_);
 
-    
+    RCLCPP_DEBUG(node_->get_logger(), "JointTrajectory packed: header.stamp=%ld.%ld, points.size=%zu",
+        initial_joint_trajectory_.header.stamp.sec,
+        initial_joint_trajectory_.header.stamp.nanosec,
+        initial_joint_trajectory_.points.size());
     
     RCLCPP_INFO(node_->get_logger(), "末端数据转关节轨迹完成");
 }

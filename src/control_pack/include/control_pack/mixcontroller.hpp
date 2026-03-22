@@ -100,7 +100,7 @@ private:
     KDL::Tree tree;
    
     std::string urdf_xml;
-    rclcpp::Node::SharedPtr param_node;
+    rclcpp::Node::SharedPtr param_query_node_;
     rclcpp::SyncParametersClient::SharedPtr robot_description_param_;
 
     // 动力学参数计算
