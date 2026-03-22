@@ -6,6 +6,7 @@
 
 #include "visualization_msgs/msg/marker.hpp"
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
+#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>

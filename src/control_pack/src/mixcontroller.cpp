@@ -2,6 +2,7 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <algorithm>
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/time.hpp>
@@ -454,6 +455,7 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             std::cout << "[DEBUG] q_kdl(" << i << ") = " << q_kdl(i) << std::endl;
             std::cout << "[DEBUG] dq_kdl(" << i << ") = " << dq_kdl(i) << std::endl;
             std::cout << "[DEBUG] ddq_kdl(" << i << ") = " << ddq_kdl(i) << std::endl;
+            std::cout << "[DEBUG] ====================" << std::endl;
         }
 
         // 动力学计算
