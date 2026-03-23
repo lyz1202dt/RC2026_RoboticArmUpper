@@ -612,14 +612,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                     }
                 }
 
-                if (has_vision_target) {
-                    try {
-                        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
-                        tf2::doTransform(vision_target_in_camera, task_target_pos, camera_link0_tf);
-                    } catch (const tf2::TransformException& ex) {
-                        RCLCPP_WARN(node->get_logger(), "视觉伺服更新目标失败: %s", ex.what());
-                    }
-                }
+
 
                 auto current_pose_now = move_group_interface->getCurrentPose();
                 calculate_prepare_pos(detected_target_pose_on_base_link_, 0.05, grasp_pose); // 10Hz 更新目标位置
