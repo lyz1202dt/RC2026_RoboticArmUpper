@@ -1,0 +1,18 @@
+# This is an example configuration file
+# To learn more, see the full config.yaml reference: https://docs.continue.dev/reference
+
+name: Continue
+version: 1.0.0
+schema: v1
+
+# Define which models can be used
+# https://docs.continue.dev/customization/models
+models:
+  - name: glm-5
+    provider: openai
+    model: ZhipuAI/GLM-5
+    apiKey: ms-01fcfd61-75e3-4f99-88d2-d0a6fa177623
+    apiBase: https://api.modelscope.cn/v1
+
+
+
