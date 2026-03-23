@@ -565,8 +565,8 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
-
-
+            // TODO: 
+            // detected_target_pose_on_base_link_ = task_target_pos; // 将目标位置保存到成员变量，供视觉伺服使用
 
 
             robot_interfaces::msg::Moveit moveit_msg;
