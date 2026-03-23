@@ -622,11 +622,11 @@ void ArmHandleNode::arm_catch_task_handle() {
                 }
 
                 auto current_pose_now = move_group_interface->getCurrentPose();
-                auto target_pose_now = calculate_prepare_pos(task_target_pos, 0.05, grasp_pose); // 10Hz 更新目标位置
+                calculate_prepare_pos(detected_target_pose_on_base_link_, 0.05, grasp_pose); // 10Hz 更新目标位置
 
                 geometry_msgs::msg::PoseStamped final_desired_position;
                 final_desired_position.header.frame_id = "base_link";
-                final_desired_position.pose = target_pose_now;
+                final_desired_position.pose = grasp_pose;
                 final_desired_position.header.stamp = node->get_clock()->now();
 
                 Eigen::Vector3d current_pose_eigen{
@@ -1283,6 +1283,22 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
     if (!rclcpp::ok()) {
         return;
@@ -1300,20 +1316,9 @@ void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::Shared
     {
         std::lock_guard<std::mutex> lock(vision_target_mutex_);
 
-        // 你当前把 frame_id 当状态字段使用：available_target / unavailable_target
-        if (msg->header.frame_id == "available_target") {
-            pose_in_camera = msg->pose;
-            available_target_pose_ = pose_in_camera;
-            candidate_valid = true;
-        } else if (msg->header.frame_id == "unavailable_target") {
-            if (has_vision_target_) {
-                pose_in_camera = available_target_pose_;
-                candidate_valid = true;
-            } else {
-                RCLCPP_WARN(node->get_logger(), "警告：无可用视觉目标且无历史缓存");
-                return;
-            }
-        }
+        pose_in_camera = msg->pose;
+        available_target_pose_ = pose_in_camera;
+        candidate_valid = true;
     }
 
     if (!candidate_valid) {

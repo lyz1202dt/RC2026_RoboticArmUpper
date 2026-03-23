@@ -263,7 +263,7 @@ void VisualServoingArmHandleNode::TotalPackaing(
     final_desired_position_ = final_desired_position;
 
     // 计算路径向量
-    Eigen::Vector3d path_vector = CalculatePath(current_position, target_position);
+    //Eigen::Vector3d path_vector = CalculatePath(current_position, target_position);
 
     // 计算Twist命令
     // geometry_msgs::msg::Twist twist_msg = CalculateTwist(path_vector);
@@ -322,6 +322,9 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
         last_desired_velocity_.linear.x = 0.0; // 初始化上次期望速度为0
         last_desired_velocity_.linear.y = 0.0;
         last_desired_velocity_.linear.z = 0.0;
+        last_desired_velocity_.angular.x = 0.0;
+        last_desired_velocity_.angular.y = 0.0;
+        last_desired_velocity_.angular.z = 0.0;
         is_first_iteration_ = false; // 标记第一次迭代完成
 
         // 保存t0时刻的完整轨迹点
@@ -389,15 +392,31 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
         final_yaw - yaw
     );
     
-    
+
+    double max_acceleration_ = 0.5; // 最大加速度 (单位: m/s^2 或 rad/s^2)
+
     // 计算当前期望加速度
     geometry_msgs::msg::Twist current_desired_acceleration;
+    
     current_desired_acceleration.linear.x = (current_desired_velocity_.linear.x - last_desired_velocity_.linear.x) / dt_;
     current_desired_acceleration.linear.y = (current_desired_velocity_.linear.y - last_desired_velocity_.linear.y) / dt_;
     current_desired_acceleration.linear.z = (current_desired_velocity_.linear.z - last_desired_velocity_.linear.z) / dt_;
     current_desired_acceleration.angular.x = (current_desired_velocity_.angular.x - last_desired_velocity_.angular.x) / dt_;
     current_desired_acceleration.angular.y = (current_desired_velocity_.angular.y - last_desired_velocity_.angular.y) / dt_;
     current_desired_acceleration.angular.z = (current_desired_velocity_.angular.z - last_desired_velocity_.angular.z) / dt_;
+
+    double acc_x = std::clamp(current_desired_acceleration.linear.x, -max_acceleration_, max_acceleration_);
+    double acc_y = std::clamp(current_desired_acceleration.linear.y, -max_acceleration_, max_acceleration_);
+    double acc_z = std::clamp(current_desired_acceleration.linear.z, -max_acceleration_, max_acceleration_);
+    double acc_angular_x = std::clamp(current_desired_acceleration.angular.x, -max_acceleration_, max_acceleration_);
+    double acc_angular_y = std::clamp(current_desired_acceleration.angular.y, -max_acceleration_, max_acceleration_);
+    double acc_angular_z = std::clamp(current_desired_acceleration.angular.z, -max_acceleration_, max_acceleration_);
+    current_desired_acceleration.linear.x = acc_x;
+    current_desired_acceleration.linear.y = acc_y;
+    current_desired_acceleration.linear.z = acc_z;
+    current_desired_acceleration.angular.x = acc_angular_x;
+    current_desired_acceleration.angular.y = acc_angular_y;
+    current_desired_acceleration.angular.z = acc_angular_z;
 
     // 更新当前期望速度
     current_desired_velocity_.linear.x = last_desired_velocity_.linear.x + current_desired_acceleration.linear.x * dt_;

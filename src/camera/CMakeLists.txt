@@ -10,8 +10,33 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(opencv2 REQUIRED)
-find_package(librealsense2 REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(realsense2 REQUIRED)
+
+add_executable(camera
+  src/vision_arm_client.cpp
+)
+
+ament_target_dependencies(camera
+  rclcpp
+  geometry_msgs
+  rclcpp_action
+)
+
+target_include_directories(camera PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(camera PRIVATE ${OpenCV_LIBS} realsense2::realsense2)
+
+
+
+
+
+
+
+
+install(TARGETS
+camera
+DESTINATION lib/${PROJECT_NAME})
+
 
 
 
