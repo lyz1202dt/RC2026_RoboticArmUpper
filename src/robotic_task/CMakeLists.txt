@@ -79,6 +79,9 @@ ament_target_dependencies(arm_test
   trajectory_msgs
   robot_interfaces
   geometry_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
 )
 
 install(TARGETS

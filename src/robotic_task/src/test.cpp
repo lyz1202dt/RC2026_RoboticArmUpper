@@ -1,7 +1,15 @@
+#include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include "robot_interfaces/action/catch.hpp"
+#include <tf2_ros/transform_listener.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <chrono>
+#include <memory>
+#include <string>
 
 class ActionTestNode : public rclcpp::Node {
 public:
@@ -14,9 +22,49 @@ public:
 
         client_ = rclcpp_action::create_client<Catch>(this, "robotic_task");
 
+        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("robotic_task_", 10);
+
+        tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
         timer_ = this->create_wall_timer(
-            std::chrono::seconds(10),
-            std::bind(&ActionTestNode::send_goal, this)
+            std::chrono::seconds(10), // 100 ms
+            std::bind(&ActionTestNode::send_goal, this) // [this]() {
+            // [this]() {
+            //     geometry_msgs::msg::PoseStamped pose_msg;
+            //     pose_msg.header.stamp = this->now();
+            //     pose_msg.header.frame_id = "base_link";
+            //     pose_msg.pose.position.x = 0.5;
+            //     pose_msg.pose.position.y = -0.2;
+            //     pose_msg.pose.position.z = 0.0;
+            //     pose_msg.pose.orientation.w = 1;
+            //     pose_msg.pose.orientation.x = 0;   
+            //     pose_msg.pose.orientation.y = 0;
+            //     pose_msg.pose.orientation.z = 0;  
+
+            //     try {
+            //         auto transformed_pose = tf_buffer_->transform(
+            //             pose_msg,
+            //             "camera_link",
+            //             tf2::durationFromSec(1.0));
+            //         pose_pub_->publish(transformed_pose);
+            //         RCLCPP_INFO_THROTTLE(
+            //             this->get_logger(),
+            //             *this->get_clock(),
+            //             5000,
+            //             "已将 base_link 下位姿转换到 camera_link: [%.3f, %.3f, %.3f],[%.3f, %.3f, %.3f, %.3f]",
+            //             transformed_pose.pose.position.x,
+            //             transformed_pose.pose.position.y,
+            //             transformed_pose.pose.position.z,
+            //             transformed_pose.pose.orientation.w,
+            //             transformed_pose.pose.orientation.x,
+            //             transformed_pose.pose.orientation.y,
+            //             transformed_pose.pose.orientation.z
+            //         );
+            //     } catch (tf2::TransformException &ex) {
+            //         RCLCPP_ERROR(this->get_logger(), "坐标变换失败: %s", ex.what());
+            //     }
+            // }
         );
 
         send_goal();
@@ -25,7 +73,12 @@ public:
 private:
     rclcpp_action::Client<Catch>::SharedPtr client_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
     bool goal_sent_ = false;
+    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    geometry_msgs::msg::TransformStamped transform_stamped_;
+
 
     // 目标发送函数详解
     void send_goal()

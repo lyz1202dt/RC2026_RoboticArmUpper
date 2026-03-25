@@ -390,7 +390,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 容差
             move_group_interface->setGoalJointTolerance(0.01); // 关节容差 0.01 rad
             move_group_interface->setGoalPositionTolerance(0.005); // 位置容差 5mm
-            move_group_interface->setGoalOrientationTolerance(0.01); // 姿态容差 1度
+            move_group_interface->setGoalOrientationTolerance(0.05); // 姿态容差放宽，避免目标树无有效采样
             // 调用 setPlanningTime 方法设置规划器的最大规划时间为 5.0 秒
             move_group_interface->setPlanningTime(10.0);
 
@@ -409,6 +409,17 @@ void ArmHandleNode::arm_catch_task_handle() {
             move_group_interface->setPoseTarget(task_target_pos); // 设置目标
             
             bool success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS); // 规划当前位置到目标位置的曲线
+            if (!success) {
+                RCLCPP_WARN(node->get_logger(), "全姿态目标规划失败，尝试位置优先规划");
+                move_group_interface->clearPoseTargets();
+                move_group_interface->setStartStateToCurrentState();
+                move_group_interface->setPositionTarget(
+                    task_target_pos.position.x,
+                    task_target_pos.position.y,
+                    task_target_pos.position.z
+                );
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            }
             // count = 0;
             // while(success == false && count <=  MAX_COUNT_){
             //     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
@@ -492,7 +503,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 continue;
 
             //    // ==================== 尝试在规划准备位置之前删除 kfs 的碰撞 ===========================
-            remove_kfs_collision("target_kfs", move_group_interface->getPlannerId());
+            remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
 
             //     // ==================== 对规划位置的逆运动学检查 =========================
             // move_group_interface->setPoseTarget(grasp_pose);
@@ -514,6 +525,23 @@ void ArmHandleNode::arm_catch_task_handle() {
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
                 count ++ ;
+            }
+            if (!success) {
+                RCLCPP_WARN(node->get_logger(), "准备位姿规划失败，尝试位置优先规划");
+                move_group_interface->clearPoseTargets();
+                move_group_interface->setStartStateToCurrentState();
+                move_group_interface->setPositionTarget(
+                    prepare_pos.position.x,
+                    prepare_pos.position.y,
+                    prepare_pos.position.z
+                );
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <=  MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "准备位置(位置优先)规划失败，重行规划%d次", count+1);
+                    count ++ ;
+                }
             }
             if(success){
                 RCLCPP_INFO(node->get_logger(), "准备位置规划成功");
@@ -1122,6 +1150,17 @@ void ArmHandleNode::arm_catch_task_handle() {
                 move_group_interface->setPoseTarget(task_target_pos); // 放置任务——要放置的坐标
 
                 auto success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                if (!success) {
+                    RCLCPP_WARN(node->get_logger(), "放置位姿规划失败，尝试位置优先规划");
+                    move_group_interface->clearPoseTargets();
+                    move_group_interface->setStartStateToCurrentState();
+                    move_group_interface->setPositionTarget(
+                        task_target_pos.position.x,
+                        task_target_pos.position.y,
+                        task_target_pos.position.z
+                    );
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                }
                 count = 0;
                 while(success == false && count <=  MAX_COUNT_){
                     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
@@ -1365,8 +1404,10 @@ void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::Shared
         has_vision_target_ = true;
     }
 
-    RCLCPP_INFO(
+    RCLCPP_INFO_THROTTLE(
         node->get_logger(),
+        *node->get_clock(),
+        5000,
         "视觉目标更新(base_link): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
         transformed_pose.position.x,
         transformed_pose.position.y,

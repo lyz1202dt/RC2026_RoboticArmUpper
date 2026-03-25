@@ -84,11 +84,22 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
     Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, 
                          box_pos.orientation.y, box_pos.orientation.z);
+    if (q.norm() < 1e-6) {
+        RCLCPP_WARN(node->get_logger(), "目标姿态四元数无效，回退为单位四元数");
+        q = Eigen::Quaterniond::Identity();
+    } else {
+        q.normalize();
+    }
     Eigen::Matrix3d R = q.toRotationMatrix();
 
     // ========== 步骤2：计算物体表面法线 ==========
     // 假设物体表面法线：使用物体的局部Z轴
     Eigen::Vector3d surface_normal = R * Eigen::Vector3d(0.0, 0.0, 1.0);
+    if (surface_normal.norm() < 1e-6) {
+        surface_normal = Eigen::Vector3d(1.0, 0.0, 0.0);
+    } else {
+        surface_normal.normalize();
+    }
     RCLCPP_INFO(node->get_logger(), "物体表面法线(局部Z轴) = (%f, %f, %f)",
                 surface_normal.x(), surface_normal.y(), surface_normal.z());
 
@@ -110,7 +121,7 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     // ========== 步骤4：计算抓取位置和准备位置 ==========
     // 需求：抓取位置在表面内5cm，准备位置在表面外5cm
     const double inside_offset = 0.05;   // 表面内5cm
-    const double outside_offset = 0.05;  // 表面外5cm
+    const double outside_offset = (approach_distance > 0.02) ? approach_distance : 0.02;  // 最少2cm，避免贴脸目标
     
     // 抓取位置：从表面向物体内部偏移5cm
     Eigen::Vector3d grasp_position = surface_position - inside_offset * surface_normal;
@@ -130,7 +141,11 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     Eigen::Vector3d robot_side_direction;
     robot_side_direction = robot_to_object;
     robot_side_direction.z() = 0;  // 忽略z轴，只考虑水平面
-    robot_side_direction.normalize();
+    if (robot_side_direction.norm() < 1e-6) {
+        robot_side_direction = Eigen::Vector3d(1.0, 0.0, 0.0);
+    } else {
+        robot_side_direction.normalize();
+    }
     
     // 远离机器人的方向 = -robot_side_direction
     Eigen::Vector3d away_from_robot = -robot_side_direction;
@@ -158,6 +173,15 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     // 这样得到的向量既垂直于 surface_normal，又保留 away_from_robot 的水平分量
     Eigen::Vector3d suction_dir = away_from_robot - 
         away_from_robot.dot(surface_normal) * surface_normal;
+    if (suction_dir.norm() < 1e-6) {
+        suction_dir = surface_normal.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
+        if (suction_dir.norm() < 1e-6) {
+            suction_dir = surface_normal.cross(Eigen::Vector3d(1.0, 0.0, 0.0));
+        }
+    }
+    if (suction_dir.norm() < 1e-6) {
+        suction_dir = away_from_robot;
+    }
     suction_dir.normalize();
     
     RCLCPP_INFO(node->get_logger(), "吸盘方向计算 = away_from_robot - 投影 = (%f, %f, %f)",
@@ -212,6 +236,9 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     // 归一化Y轴
     if (eef_y_axis.norm() < 1e-6) {
         eef_y_axis = eef_x_axis.cross(global_z);
+    }
+    if (eef_y_axis.norm() < 1e-6) {
+        eef_y_axis = Eigen::Vector3d(0.0, 1.0, 0.0);
     }
     eef_y_axis.normalize();
     RCLCPP_INFO(node->get_logger(), "末端Y轴 = (%f, %f, %f)",
