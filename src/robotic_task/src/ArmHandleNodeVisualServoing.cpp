@@ -28,6 +28,37 @@ VisualServoingArmHandleNode::VisualServoingArmHandleNode(const rclcpp::Node::Sha
 
 VisualServoingArmHandleNode::~VisualServoingArmHandleNode() = default;
 
+void VisualServoingArmHandleNode::resetServoState(
+    const geometry_msgs::msg::PoseStamped& actual_position,
+    const geometry_msgs::msg::PoseStamped& final_desired_position) {
+    actual_position_ = actual_position;
+    final_desired_position_ = final_desired_position;
+    crrent_desired_position_ = actual_position;
+    LastTargetPose_ = final_desired_position;
+
+    current_desired_velocity_ = geometry_msgs::msg::Twist{};
+    last_desired_velocity_ = geometry_msgs::msg::Twist{};
+
+    initial_trajectory_point_.pose = actual_position;
+    initial_trajectory_point_.velocity = geometry_msgs::msg::Twist{};
+    initial_trajectory_point_.acceleration = geometry_msgs::msg::Twist{};
+    initial_trajectory_point_.timestamp = node_->now();
+
+    servo_state_initialized_ = true;
+    is_first_iteration_ = false;
+
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "重置视觉伺服状态: actual_pos=(%.4f, %.4f, %.4f), target_pos=(%.4f, %.4f, %.4f)",
+        actual_position.pose.position.x,
+        actual_position.pose.position.y,
+        actual_position.pose.position.z,
+        final_desired_position.pose.position.x,
+        final_desired_position.pose.position.y,
+        final_desired_position.pose.position.z
+    );
+}
+
 bool VisualServoingArmHandleNode::initKDL() {
     // 获取URDF参数
     robot_description_client_ = std::make_shared<rclcpp::SyncParametersClient>(node_, "/robot_state_publisher");
@@ -269,6 +300,34 @@ void VisualServoingArmHandleNode::TotalPackaing(
     actual_position_ = actual_position;
     final_desired_position_ = final_desired_position;
 
+    const Eigen::Vector3d actual_position_eigen(
+        actual_position.pose.position.x,
+        actual_position.pose.position.y,
+        actual_position.pose.position.z
+    );
+    const Eigen::Vector3d previous_desired_position_eigen(
+        crrent_desired_position_.pose.position.x,
+        crrent_desired_position_.pose.position.y,
+        crrent_desired_position_.pose.position.z
+    );
+    const Eigen::Vector3d previous_target_position_eigen(
+        LastTargetPose_.pose.position.x,
+        LastTargetPose_.pose.position.y,
+        LastTargetPose_.pose.position.z
+    );
+
+    const bool should_reset_state =
+        !servo_state_initialized_ ||
+        is_first_iteration_ ||
+        (actual_position_eigen - previous_desired_position_eigen).norm() > 0.05 ||
+        (target_position - previous_target_position_eigen).norm() > 0.10;
+
+    if (should_reset_state) {
+        resetServoState(actual_position, final_desired_position);
+    } else {
+        LastTargetPose_ = final_desired_position;
+    }
+
     // 计算路径向量
     //Eigen::Vector3d path_vector = CalculatePath(current_position, target_position);
 
@@ -371,7 +430,7 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     current_desired_velocity_.linear.x = (final_desired_position_.pose.position.x - crrent_desired_position_.pose.position.x) * kp_;
     current_desired_velocity_.linear.y = (final_desired_position_.pose.position.y - crrent_desired_position_.pose.position.y) * kp_;
     current_desired_velocity_.linear.z = (final_desired_position_.pose.position.z - crrent_desired_position_.pose.position.z) * kp_;
-    // Quaternion -> Euler angles
+
     tf2::Quaternion final_quaternion(
         final_desired_position_.pose.orientation.x,
         final_desired_position_.pose.orientation.y,
@@ -397,13 +456,14 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
         node_->get_logger(),
         *node_->get_clock(),
         500,
-        "PoseErr: dpos=(%.5f, %.5f, %.5f), dRPY=(%.5f, %.5f, %.5f)",
+        "PoseErr: dpos=(%.5f, %.5f, %.5f), drot=(%.5f, %.5f, %.5f), angle=%.5f",
         final_desired_position_.pose.position.x - crrent_desired_position_.pose.position.x,
         final_desired_position_.pose.position.y - crrent_desired_position_.pose.position.y,
         final_desired_position_.pose.position.z - crrent_desired_position_.pose.position.z,
-        final_roll - roll,
-        final_pitch - pitch,
-        final_yaw - yaw
+        current_desired_velocity_.angular.x,
+        current_desired_velocity_.angular.y,
+        current_desired_velocity_.angular.z,
+        relative_angle
     );
     
 
@@ -504,6 +564,8 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
 
     // 当前机械臂目标=当前期望位置/当前期望速度/当前期望加速度
 
+    const rclcpp::Time previous_timestamp = initial_trajectory_point_.timestamp;
+
     initial_trajectory_point_.pose = crrent_desired_position_;
     initial_trajectory_point_.velocity.linear.x = current_desired_velocity_.linear.x;
     initial_trajectory_point_.velocity.linear.y = current_desired_velocity_.linear.y;
@@ -521,7 +583,7 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     last_desired_velocity_ = current_desired_velocity_;
     
     rclcpp::Time now = node_->get_clock()->now();
-    rclcpp::Duration dt = now - initial_joint_trajectory_.header.stamp;
+    rclcpp::Duration dt = now - previous_timestamp;
     duration_ns_ = dt.nanoseconds();
     duration_sec_ = dt.seconds();
 }
@@ -538,7 +600,7 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
         RCLCPP_ERROR(node_->get_logger(), "KDL求解器未初始化");
         return;
     }
-    
+    terminal
     // 检查是否收到关节状态
     if (!joint_state_received_) {
         RCLCPP_WARN(node_->get_logger(), "未收到关节状态，无法进行IK求解");
@@ -578,9 +640,9 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     double roll, pitch, yaw;
     target_frame.M.GetRPY(roll, pitch, yaw);
     RCLCPP_INFO(node_->get_logger(),
-        "KDL Frame position: x=%.3f, y=%.3f, z=%.3f. KDL Frame orientation (RPY): roll=%.3f, pitch=%.3f, yaw=%.3f",
+        "KDL Frame position: x=%.3f, y=%.3f, z=%.3f. KDL Frame orientation (RPY): roll=%.3f, pitch=%.3f, yaw=%.3f, raw|q|=%.6f",
         target_frame.p.x(), target_frame.p.y(), target_frame.p.z(),
-        roll, pitch, yaw
+        roll, pitch, yaw, raw_quaternion_norm
     );
 
     
@@ -728,8 +790,6 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     
     RCLCPP_INFO(node_->get_logger(), "末端数据转关节轨迹完成");
 }
-
-
 
 
 

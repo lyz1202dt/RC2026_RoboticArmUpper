@@ -66,6 +66,9 @@ public:
     Eigen::Vector3d CalculatePath(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
 
 private:
+    void resetServoState(const geometry_msgs::msg::PoseStamped& actual_position,
+                         const geometry_msgs::msg::PoseStamped& final_desired_position);
+
     // current 
     geometry_msgs::msg::PoseStamped CurrentPose_;
     geometry_msgs::msg::PoseStamped TargetPose_;
@@ -113,6 +116,7 @@ private:
     double kp_ = 1.0; // 比例增益
     double dt_ = 0.01; // 控制周期
     bool is_first_iteration_ = true; // 是否是第一次迭代
+    bool servo_state_initialized_ = false; // 视觉伺服内部状态是否已初始化
     
     void ComputationalSpeed();
 
@@ -156,7 +160,6 @@ private:
 
 
 };
-
 
 
 
