@@ -127,13 +127,16 @@ private:
     KDL::Chain kdl_chain_;
     KDL::Tree kdl_tree_;
     std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
+    std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_position_priority_;
     std::shared_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;
     
     // 关节状态
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     KDL::JntArray current_joint_positions_;
+    KDL::JntArray last_successful_joint_positions_;
     std::mutex joint_state_mutex_;
     bool joint_state_received_{false};
+    bool has_last_successful_joint_positions_{false};
     
     // URDF参数客户端
     rclcpp::SyncParametersClient::SharedPtr robot_description_client_;
