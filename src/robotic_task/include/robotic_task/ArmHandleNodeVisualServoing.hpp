@@ -41,6 +41,7 @@
 #include <kdl/chainiksolvervel_pinv.hpp>
 #include <kdl/chainiksolverpos_lma.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <vector>
 
 
 // 轨迹点结构体
@@ -64,6 +65,8 @@ public:
 
         // calculate path vector
     Eigen::Vector3d CalculatePath(Eigen::Vector3d& current_position, Eigen::Vector3d& target_position);
+
+    void updateExternalJointSeed(const std::vector<double>& joint_positions);
 
 private:
     void resetServoState(const geometry_msgs::msg::PoseStamped& actual_position,
@@ -117,6 +120,13 @@ private:
     double dt_ = 0.01; // 控制周期
     bool is_first_iteration_ = true; // 是否是第一次迭代
     bool servo_state_initialized_ = false; // 视觉伺服内部状态是否已初始化
+    double ik_position_tolerance_m_ = 0.001;
+    double ik_orientation_tolerance_rad_ = 0.20;
+    double ik_orientation_tolerance_relaxed_rad_ = 0.25;
+    int ik_fail_relax_after_n_ = 5;
+    int consecutive_ik_failures_ = 0;
+    double joint_state_timeout_sec_ = 0.2;
+    double external_seed_timeout_sec_ = 0.2;
     
     void ComputationalSpeed();
 
@@ -125,19 +135,26 @@ private:
     // 获取t0时刻的轨迹点
     TrajectoryPoint getInitialTrajectory() const;
 
-    void PointToTrajectoryPoint();
+    bool PointToTrajectoryPoint();
 
     // KDL相关
     KDL::Chain kdl_chain_;
     KDL::Tree kdl_tree_;
     std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
+    std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_position_priority_;
     std::shared_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;
     
     // 关节状态
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     KDL::JntArray current_joint_positions_;
+    KDL::JntArray external_joint_seed_;
+    KDL::JntArray last_successful_joint_positions_;
     std::mutex joint_state_mutex_;
     bool joint_state_received_{false};
+    bool has_external_joint_seed_{false};
+    bool has_last_successful_joint_positions_{false};
+    rclcpp::Time last_joint_state_stamp_;
+    rclcpp::Time external_joint_seed_stamp_;
     
     // URDF参数客户端
     rclcpp::SyncParametersClient::SharedPtr robot_description_client_;

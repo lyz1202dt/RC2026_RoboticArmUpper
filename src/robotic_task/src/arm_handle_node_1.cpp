@@ -142,7 +142,19 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     robot_side_direction = robot_to_object;
     robot_side_direction.z() = 0;  // 忽略z轴，只考虑水平面
     if (robot_side_direction.norm() < 1e-6) {
-        robot_side_direction = Eigen::Vector3d(1.0, 0.0, 0.0);
+        if (has_last_prepare_orientation_) {
+            Eigen::Vector3d last_away = last_prepare_orientation_.toRotationMatrix().col(0);
+            Eigen::Vector3d fallback_side = -last_away;
+            fallback_side.z() = 0.0;
+            if (fallback_side.norm() > 1e-6) {
+                robot_side_direction = fallback_side.normalized();
+                RCLCPP_WARN(node->get_logger(), "机器人与目标几乎重合，沿用上一帧水平朝向维持连续性");
+            } else {
+                robot_side_direction = Eigen::Vector3d(1.0, 0.0, 0.0);
+            }
+        } else {
+            robot_side_direction = Eigen::Vector3d(1.0, 0.0, 0.0);
+        }
     } else {
         robot_side_direction.normalize();
     }
@@ -256,6 +268,30 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     R_eef.col(1) = eef_y_axis;
     R_eef.col(2) = eef_z_axis;
     Eigen::Quaterniond q_eef(R_eef);
+    q_eef.normalize();
+
+    if (has_last_prepare_orientation_) {
+        if (q_eef.dot(last_prepare_orientation_) < 0.0) {
+            q_eef.coeffs() = -q_eef.coeffs();
+        }
+
+        const double angular_jump = last_prepare_orientation_.angularDistance(q_eef);
+        if (angular_jump > prepare_orientation_max_step_rad_) {
+            const double blend = prepare_orientation_max_step_rad_ / angular_jump;
+            q_eef = last_prepare_orientation_.slerp(blend, q_eef);
+            q_eef.normalize();
+            constexpr double kRadToDeg = 57.29577951308232;
+            RCLCPP_WARN(
+                node->get_logger(),
+                "检测到姿态突跳(%.2f deg)，已限幅到 %.2f deg",
+                angular_jump * kRadToDeg,
+                prepare_orientation_max_step_rad_ * kRadToDeg
+            );
+        }
+    }
+
+    last_prepare_orientation_ = q_eef;
+    has_last_prepare_orientation_ = true;
 
     // ========== 步骤9：构造返回的Pose消息 ==========
     geometry_msgs::msg::Pose result;

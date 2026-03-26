@@ -1,5 +1,7 @@
 #include "ArmHandleNodeVisualServoing.hpp"
+#include <array>
 #include <cmath>
+#include <limits>
 #include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <rclcpp/duration.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
@@ -17,6 +19,26 @@ VisualServoingArmHandleNode::VisualServoingArmHandleNode(const rclcpp::Node::Sha
     if (!initKDL()) {
         RCLCPP_ERROR(node_->get_logger(), "KDL初始化失败");
     }
+
+    ik_position_tolerance_m_ = node_->declare_parameter<double>(
+        "visual_servo.ik_position_tolerance_m", ik_position_tolerance_m_);
+    ik_orientation_tolerance_rad_ = node_->declare_parameter<double>(
+        "visual_servo.ik_orientation_tolerance_rad", ik_orientation_tolerance_rad_);
+    ik_orientation_tolerance_relaxed_rad_ = node_->declare_parameter<double>(
+        "visual_servo.ik_orientation_tolerance_relaxed_rad", ik_orientation_tolerance_relaxed_rad_);
+    ik_fail_relax_after_n_ = node_->declare_parameter<int>(
+        "visual_servo.ik_fail_relax_after_n", ik_fail_relax_after_n_);
+    joint_state_timeout_sec_ = node_->declare_parameter<double>(
+        "visual_servo.joint_state_timeout_sec", joint_state_timeout_sec_);
+    external_seed_timeout_sec_ = node_->declare_parameter<double>(
+        "visual_servo.external_seed_timeout_sec", external_seed_timeout_sec_);
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "视觉伺服IK阈值: trans=%.6f m, rot=%.6f rad (relaxed=%.6f rad, fail_relax_after=%d)",
+        ik_position_tolerance_m_,
+        ik_orientation_tolerance_rad_,
+        ik_orientation_tolerance_relaxed_rad_,
+        ik_fail_relax_after_n_);
     
     // 订阅关节状态
     joint_state_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
@@ -94,6 +116,10 @@ bool VisualServoingArmHandleNode::initKDL() {
     
     // 创建IK求解器
     ik_solver_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(kdl_chain_);
+    Eigen::Matrix<double, 6, 1> l_pos_priority;
+    l_pos_priority << 1.0, 1.0, 1.0, 1e-4, 1e-4, 1e-4;
+    ik_solver_position_priority_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(
+        kdl_chain_, l_pos_priority, 1E-5, 500, 1E-15);
     
     // 创建雅可比求解器
     jacobian_solver_ = std::make_shared<KDL::ChainJntToJacSolver>(kdl_chain_);
@@ -104,20 +130,95 @@ bool VisualServoingArmHandleNode::initKDL() {
 
 void VisualServoingArmHandleNode::jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    
-    // 关节名称映射
-    std::vector<std::string> joint_names = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
-    
-    for (size_t i = 0; i < joint_names.size(); ++i) {
-        auto it = std::find(msg->name.begin(), msg->name.end(), joint_names[i]);
-        if (it != msg->name.end()) {
-            size_t idx = std::distance(msg->name.begin(), it);
-            if (idx < msg->position.size()) {
-                current_joint_positions_(i) = msg->position[idx];
+
+    // 兼容不同驱动的关节命名风格，只有全部6个关节都匹配到才认为关节状态有效。
+    const std::array<std::array<std::string, 3>, 6> joint_name_candidates = {{
+        {{"joint1", "joint_1", "j1"}},
+        {{"joint2", "joint_2", "j2"}},
+        {{"joint3", "joint_3", "j3"}},
+        {{"joint4", "joint_4", "j4"}},
+        {{"joint5", "joint_5", "j5"}},
+        {{"joint6", "joint_6", "j6"}}
+    }};
+
+    const auto name_matches = [](const std::string& actual, const std::string& expected) {
+        if (actual == expected) {
+            return true;
+        }
+        if (actual.size() > expected.size() &&
+            actual.compare(actual.size() - expected.size(), expected.size(), expected) == 0) {
+            const size_t prefix_end = actual.size() - expected.size();
+            return prefix_end > 0 && (actual[prefix_end - 1] == '/' || actual[prefix_end - 1] == '_');
+        }
+        return false;
+    };
+
+    size_t matched_joint_count = 0;
+    for (size_t i = 0; i < joint_name_candidates.size(); ++i) {
+        bool found_this_joint = false;
+        for (size_t msg_idx = 0; msg_idx < msg->name.size(); ++msg_idx) {
+            if (msg_idx >= msg->position.size()) {
+                continue;
+            }
+            for (const auto& candidate : joint_name_candidates[i]) {
+                if (name_matches(msg->name[msg_idx], candidate)) {
+                    current_joint_positions_(i) = msg->position[msg_idx];
+                    found_this_joint = true;
+                    break;
+                }
+            }
+            if (found_this_joint) {
+                break;
             }
         }
+        if (found_this_joint) {
+            ++matched_joint_count;
+        }
     }
-    joint_state_received_ = true;
+
+    if (matched_joint_count == joint_name_candidates.size()) {
+        joint_state_received_ = true;
+        last_joint_state_stamp_ = msg->header.stamp.nanosec == 0 && msg->header.stamp.sec == 0
+            ? node_->get_clock()->now()
+            : rclcpp::Time(msg->header.stamp);
+    } else {
+        joint_state_received_ = false;
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "joint_states关节名匹配不完整: matched=%zu/6, msg_names_count=%zu",
+            matched_joint_count,
+            msg->name.size()
+        );
+    }
+}
+
+void VisualServoingArmHandleNode::updateExternalJointSeed(const std::vector<double>& joint_positions) {
+    std::lock_guard<std::mutex> lock(joint_state_mutex_);
+
+    const unsigned int expected_joint_count = current_joint_positions_.rows();
+    if (expected_joint_count == 0) {
+        return;
+    }
+    if (joint_positions.size() != expected_joint_count) {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "外部关节种子维度不匹配: got=%zu, expected=%u",
+            joint_positions.size(),
+            expected_joint_count
+        );
+        return;
+    }
+
+    external_joint_seed_.resize(expected_joint_count);
+    for (unsigned int i = 0; i < expected_joint_count; ++i) {
+        external_joint_seed_(i) = joint_positions[i];
+    }
+    has_external_joint_seed_ = true;
+    external_joint_seed_stamp_ = node_->get_clock()->now();
 }
 
 Eigen::Vector3d VisualServoingArmHandleNode::CalculatePath(
@@ -207,7 +308,7 @@ geometry_msgs::msg::Twist VisualServoingArmHandleNode::CalculateTwist(Eigen::Vec
 }
 
 void VisualServoingArmHandleNode::SendTwistCommand(const geometry_msgs::msg::Twist& twist_msg) {
-    twist_publisher_->publish(current_desired_velocity_); // 发布Twist消息
+    twist_publisher_->publish(twist_msg); // 发布Twist消息
 }
 
 void VisualServoingArmHandleNode::SendTrajectoryCommand() {
@@ -330,10 +431,18 @@ void VisualServoingArmHandleNode::TotalPackaing(
     ComputationalSpeed(); // 计算当前期望速度和位置
     
     // 将末端数据转换为关节轨迹
-    PointToTrajectoryPoint();
+    const bool ik_ok = PointToTrajectoryPoint();
 
     // 发送轨迹命令
-    SendTrajectoryCommand();
+    if (ik_ok) {
+        SendTrajectoryCommand();
+    } else {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            1000,
+            "IK未收敛，本周期跳过轨迹发送，避免发布异常速度/加速度");
+    }
 
     // if (path_vector.norm() < 0.01) { // 如果路径向量的大小小于某个阈值，认为已经到达目标位置
     //     RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "已到达目标位置");
@@ -569,18 +678,11 @@ TrajectoryPoint VisualServoingArmHandleNode::getInitialTrajectory() const {
 
 
 // 使用KDL将末端数据转换成关节数据
-void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
-    if (!ik_solver_ || !jacobian_solver_) {
+bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
+    if (!ik_solver_ || !ik_solver_position_priority_ || !jacobian_solver_) {
         RCLCPP_ERROR(node_->get_logger(), "KDL求解器未初始化");
-        return;
+        return false;
     }
-    terminal
-    // 检查是否收到关节状态
-    if (!joint_state_received_) {
-        RCLCPP_WARN(node_->get_logger(), "未收到关节状态，无法进行IK求解");
-        return;
-    }
-    
     // 1. 从末端位姿构建KDL::Frame
     const auto& pose = initial_trajectory_point_.pose.pose;
     tf2::Quaternion target_quaternion(
@@ -593,7 +695,7 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     const double raw_quaternion_norm = target_quaternion.length();
     if (raw_quaternion_norm < 1e-9) {
         RCLCPP_ERROR(node_->get_logger(), "目标姿态四元数范数过小，放弃本次IK求解");
-        return;
+        return false;
     }
     target_quaternion.normalize();
 
@@ -613,23 +715,118 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     );
 
     
-    // 2. 获取当前关节位置作为初值
+    // 2. 获取关节初值（优先级: 外部种子 -> joint_states -> 上次成功解）
     KDL::JntArray q_init, q_result;
+    std::string seed_source = "none";
     {
         std::lock_guard<std::mutex> lock(joint_state_mutex_);
-        RCLCPP_INFO(node_->get_logger(), "q_init: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-            current_joint_positions_(0), current_joint_positions_(1),
-            current_joint_positions_(2), current_joint_positions_(3),
-            current_joint_positions_(4), current_joint_positions_(5)
-        );
-        q_init = current_joint_positions_;
+        const rclcpp::Time now = node_->get_clock()->now();
+        const bool external_seed_fresh =
+            has_external_joint_seed_ &&
+            external_joint_seed_.rows() == current_joint_positions_.rows() &&
+            external_joint_seed_stamp_.nanoseconds() > 0 &&
+            (now - external_joint_seed_stamp_).seconds() <= external_seed_timeout_sec_;
+        const bool joint_state_fresh =
+            joint_state_received_ &&
+            last_joint_state_stamp_.nanoseconds() > 0 &&
+            (now - last_joint_state_stamp_).seconds() <= joint_state_timeout_sec_;
+
+        if (external_seed_fresh) {
+            q_init = external_joint_seed_;
+            seed_source = "external_moveit";
+        } else if (joint_state_fresh) {
+            q_init = current_joint_positions_;
+            seed_source = "joint_states";
+        } else if (has_last_successful_joint_positions_ &&
+                   last_successful_joint_positions_.rows() == current_joint_positions_.rows()) {
+            q_init = last_successful_joint_positions_;
+            seed_source = "last_successful";
+        }
     }
+
+    if (seed_source == "none" || q_init.rows() == 0) {
+        ++consecutive_ik_failures_;
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            1000,
+            "无可用IK初值(外部种子/joint_states均不可用)，跳过本次IK"
+        );
+        return false;
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+        "IK seed source=%s, q_init=[%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+        seed_source.c_str(),
+        q_init(0), q_init(1), q_init(2), q_init(3), q_init(4), q_init(5));
+
     q_result.resize(q_init.rows());
-    
-    // 3. IK求解关节位置
-    int ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_result);
+
+    // 3. IK求解关节位置: 当前关节初值 -> 上次成功解初值 -> 位置优先IK
+    int ik_result = std::numeric_limits<int>::min();
+    ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_result);
+
+    if (ik_result < 0 && has_last_successful_joint_positions_ &&
+        last_successful_joint_positions_.rows() == q_init.rows()) {
+        KDL::JntArray q_retry(q_init.rows());
+        q_retry = last_successful_joint_positions_;
+        ik_result = ik_solver_->CartToJnt(q_retry, target_frame, q_result);
+        RCLCPP_WARN(node_->get_logger(), "IK使用当前关节初值失败，已尝试上次成功解作为初值");
+    }
+
     if (ik_result < 0) {
-        RCLCPP_ERROR(node_->get_logger(), "IK求解失败: %d", ik_result);
+        RCLCPP_WARN(node_->get_logger(),
+            "标准IK失败(%d: %s)，尝试位置优先IK。lastTransDiff=%.6f, lastRotDiff=%.6f, iter=%d",
+            ik_result,
+            ik_solver_->strError(ik_result),
+            ik_solver_->lastTransDiff,
+            ik_solver_->lastRotDiff,
+            ik_solver_->lastNrOfIter
+        );
+
+        ik_result = ik_solver_position_priority_->CartToJnt(q_init, target_frame, q_result);
+        if (ik_result < 0 && has_last_successful_joint_positions_ &&
+            last_successful_joint_positions_.rows() == q_init.rows()) {
+            KDL::JntArray q_retry(q_init.rows());
+            q_retry = last_successful_joint_positions_;
+            ik_result = ik_solver_position_priority_->CartToJnt(q_retry, target_frame, q_result);
+            RCLCPP_WARN(node_->get_logger(), "位置优先IK使用当前关节初值失败，已尝试上次成功解作为初值");
+        }
+    }
+
+    if (ik_result < 0) {
+        const double active_rot_tolerance =
+            consecutive_ik_failures_ >= ik_fail_relax_after_n_
+                ? ik_orientation_tolerance_relaxed_rad_
+                : ik_orientation_tolerance_rad_;
+        const bool accept_near_solution =
+            ik_solver_position_priority_->lastTransDiff <= ik_position_tolerance_m_ &&
+            ik_solver_position_priority_->lastRotDiff <= active_rot_tolerance;
+
+        if (accept_near_solution) {
+            RCLCPP_WARN(node_->get_logger(),
+                "IK未严格收敛但已满足容忍阈值，接受近似解: trans=%.6f<=%.6f, rot=%.6f<=%.6f (fail_count=%d)",
+                ik_solver_position_priority_->lastTransDiff,
+                ik_position_tolerance_m_,
+                ik_solver_position_priority_->lastRotDiff,
+                active_rot_tolerance,
+                consecutive_ik_failures_);
+            ik_result = 0;
+        }
+    }
+
+    if (ik_result < 0) {
+        RCLCPP_ERROR(node_->get_logger(),
+            "IK求解失败: %d (%s), standard(lastTransDiff=%.6f,lastRotDiff=%.6f,iter=%d), relaxed(lastTransDiff=%.6f,lastRotDiff=%.6f,iter=%d)",
+            ik_result,
+            ik_solver_position_priority_->strError(ik_result),
+            ik_solver_->lastTransDiff,
+            ik_solver_->lastRotDiff,
+            ik_solver_->lastNrOfIter,
+            ik_solver_position_priority_->lastTransDiff,
+            ik_solver_position_priority_->lastRotDiff,
+            ik_solver_position_priority_->lastNrOfIter
+        );
         double roll, pitch, yaw;
 
         target_frame.M.GetRPY(roll, pitch, yaw);
@@ -640,8 +837,14 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
             roll, pitch, yaw
         );
 
-        return;
+        ++consecutive_ik_failures_;
+        return false;
     }
+
+    last_successful_joint_positions_.resize(q_result.rows());
+    last_successful_joint_positions_ = q_result;
+    has_last_successful_joint_positions_ = true;
+    consecutive_ik_failures_ = 0;
 
     std::ostringstream ss;
     ss << "q_result: [";
@@ -706,12 +909,13 @@ void VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     point.effort.clear();
     point.time_from_start = rclcpp::Duration::from_seconds(dt_);
 
-    RCLCPP_DEBUG(node_->get_logger(), "JointTrajectory packed: header.stamp=%ld.%ld, points.size=%zu",
+    RCLCPP_DEBUG(node_->get_logger(), "JointTrajectory packed: header.stamp=%d.%u, points.size=%zu",
         initial_joint_trajectory_.header.stamp.sec,
         initial_joint_trajectory_.header.stamp.nanosec,
         initial_joint_trajectory_.points.size());
     
     RCLCPP_INFO(node_->get_logger(), "末端数据转关节轨迹完成");
+    return true;
 }
 
 

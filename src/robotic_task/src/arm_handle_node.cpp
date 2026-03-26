@@ -662,6 +662,9 @@ void ArmHandleNode::arm_catch_task_handle() {
                     final_desired_position.pose.position.z
                 };
 
+                const std::vector<double> current_joint_values = move_group_interface->getCurrentJointValues();
+                visual_servoing_handler_.updateExternalJointSeed(current_joint_values);
+
                 visual_servoing_handler_.TotalPackaing(current_pose_eigen, final_desired_position_eigen, current_pose_now, final_desired_position);
                 
 
