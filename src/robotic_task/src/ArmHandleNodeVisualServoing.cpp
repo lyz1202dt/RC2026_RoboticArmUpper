@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <limits>
 #include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <rclcpp/duration.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
@@ -116,6 +117,10 @@ bool VisualServoingArmHandleNode::initKDL() {
     
     // 创建IK求解器
     ik_solver_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(kdl_chain_);
+    Eigen::Matrix<double, 6, 1> l_pos_priority;
+    l_pos_priority << 1.0, 1.0, 1.0, 1e-4, 1e-4, 1e-4;
+    ik_solver_position_priority_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(
+        kdl_chain_, l_pos_priority, 1E-5, 500, 1E-15);
     Eigen::Matrix<double, 6, 1> l_pos_priority;
     l_pos_priority << 1.0, 1.0, 1.0, 1e-4, 1e-4, 1e-4;
     ik_solver_position_priority_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(
@@ -387,6 +392,8 @@ void VisualServoingArmHandleNode::TotalPackaing(
     Eigen::Vector3d& current_position, Eigen::Vector3d& target_position,
     geometry_msgs::msg::PoseStamped& actual_position, geometry_msgs::msg::PoseStamped& final_desired_position
     ) {
+    (void)current_position;
+    (void)target_position;
     
     // 设置当前位姿和目标位姿
     CurrentPose_ = actual_position;
@@ -476,8 +483,56 @@ void VisualServoingArmHandleNode::TotalPackaing(
     // 当前期望位位置=当前期望位位置+当前期望速度*dt
     // 当前机械臂目标=当前期望位置/当前期望速度/当前期望加速度
 void VisualServoingArmHandleNode::ComputationalSpeed() {
-    if (!servo_state_initialized_ || is_first_iteration_) {
-        resetServoState(CurrentPose_, TargetPose_);
+    if (dt_ <= 1e-6) {
+        RCLCPP_ERROR(node_->get_logger(), "dt_过小(%.9f)，无法进行速度/加速度积分", dt_);
+        return;
+    }
+
+    if(is_first_iteration_) {
+        actual_position_ = CurrentPose_;
+        final_desired_position_ = TargetPose_;
+
+        crrent_desired_position_ = actual_position_; // 初始化当前期望位置为实际位置
+        current_desired_velocity_.linear.x = 0.0; // 初始化当前期望速度为0
+        current_desired_velocity_.linear.y = 0.0;
+        current_desired_velocity_.linear.z = 0.0;
+        current_desired_velocity_.angular.x = 0.0;
+        current_desired_velocity_.angular.y = 0.0;
+        current_desired_velocity_.angular.z = 0.0;
+        last_desired_velocity_.linear.x = 0.0; // 初始化上次期望速度为0
+        last_desired_velocity_.linear.y = 0.0;
+        last_desired_velocity_.linear.z = 0.0;
+        last_desired_velocity_.angular.x = 0.0;
+        last_desired_velocity_.angular.y = 0.0;
+        last_desired_velocity_.angular.z = 0.0;
+        is_first_iteration_ = false; // 标记第一次迭代完成
+
+        // 保存t0时刻的完整轨迹点
+        initial_trajectory_point_.pose = CurrentPose_;
+        initial_trajectory_point_.velocity.linear.x = 0.0;
+        initial_trajectory_point_.velocity.linear.y = 0.0;
+        initial_trajectory_point_.velocity.linear.z = 0.0;
+        initial_trajectory_point_.velocity.angular.x = 0.0;
+        initial_trajectory_point_.velocity.angular.y = 0.0;
+        initial_trajectory_point_.velocity.angular.z = 0.0;
+        initial_trajectory_point_.acceleration.linear.x = 0.0;
+        initial_trajectory_point_.acceleration.linear.y = 0.0;
+        initial_trajectory_point_.acceleration.linear.z = 0.0;
+        initial_trajectory_point_.acceleration.angular.x = 0.0;
+        initial_trajectory_point_.acceleration.angular.y = 0.0;
+        initial_trajectory_point_.acceleration.angular.z = 0.0;
+        initial_trajectory_point_.timestamp = node_->now();
+
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "ComputationalSpeed init: actual_pos=(%.4f, %.4f, %.4f), target_pos=(%.4f, %.4f, %.4f)",
+            actual_position_.pose.position.x,
+            actual_position_.pose.position.y,
+            actual_position_.pose.position.z,
+            final_desired_position_.pose.position.x,
+            final_desired_position_.pose.position.y,
+            final_desired_position_.pose.position.z
+        );
     }
 
     // 计算当前期望速度
@@ -497,40 +552,14 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
         crrent_desired_position_.pose.orientation.z,
         crrent_desired_position_.pose.orientation.w
     );
-
     final_quaternion.normalize();
     current_quaternion.normalize();
-
-    tf2::Quaternion relative_quaternion = current_quaternion.inverse() * final_quaternion;
-    if (relative_quaternion.getW() < 0.0) {
-        relative_quaternion = tf2::Quaternion(
-            -relative_quaternion.x(),
-            -relative_quaternion.y(),
-            -relative_quaternion.z(),
-            -relative_quaternion.w()
-        );
-    }
-    relative_quaternion.normalize();
-
-    const double relative_vector_norm = std::sqrt(
-        relative_quaternion.x() * relative_quaternion.x() +
-        relative_quaternion.y() * relative_quaternion.y() +
-        relative_quaternion.z() * relative_quaternion.z()
-    );
-    const double relative_angle = 2.0 * std::atan2(relative_vector_norm, relative_quaternion.w());
-
-    tf2::Vector3 relative_axis(0.0, 0.0, 0.0);
-    if (relative_vector_norm > 1e-9) {
-        relative_axis = tf2::Vector3(
-            relative_quaternion.x() / relative_vector_norm,
-            relative_quaternion.y() / relative_vector_norm,
-            relative_quaternion.z() / relative_vector_norm
-        );
-    }
-
-    current_desired_velocity_.angular.x = relative_axis.x() * relative_angle * kp_;
-    current_desired_velocity_.angular.y = relative_axis.y() * relative_angle * kp_;
-    current_desired_velocity_.angular.z = relative_axis.z() * relative_angle * kp_;
+    double roll, pitch, yaw, final_roll, final_pitch, final_yaw;
+    tf2::Matrix3x3(final_quaternion).getRPY(final_roll, final_pitch, final_yaw);
+    tf2::Matrix3x3(current_quaternion).getRPY(roll, pitch, yaw);
+    current_desired_velocity_.angular.x = (final_roll - roll) * kp_;
+    current_desired_velocity_.angular.y = (final_pitch - pitch) * kp_;
+    current_desired_velocity_.angular.z = (final_yaw - yaw) * kp_;
 
     RCLCPP_DEBUG_THROTTLE(
         node_->get_logger(),
@@ -597,30 +626,28 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     crrent_desired_position_.pose.position.x += current_desired_velocity_.linear.x * dt_;
     crrent_desired_position_.pose.position.y += current_desired_velocity_.linear.y * dt_;
     crrent_desired_position_.pose.position.z += current_desired_velocity_.linear.z * dt_;
-
-    // 用增量四元数积分姿态，避免直接叠加四元数分量导致姿态失真。
-    const double angular_speed = std::sqrt(
-        current_desired_velocity_.angular.x * current_desired_velocity_.angular.x +
-        current_desired_velocity_.angular.y * current_desired_velocity_.angular.y +
-        current_desired_velocity_.angular.z * current_desired_velocity_.angular.z
+    // 用四元数乘法积分角速度，避免直接叠加四元数分量导致姿态漂移。
+    tf2::Quaternion desired_q(
+        crrent_desired_position_.pose.orientation.x,
+        crrent_desired_position_.pose.orientation.y,
+        crrent_desired_position_.pose.orientation.z,
+        crrent_desired_position_.pose.orientation.w
     );
+    desired_q.normalize();
 
-    tf2::Quaternion updated_orientation = current_quaternion;
-    if (angular_speed > 1e-9) {
-        const double delta_angle = angular_speed * dt_;
-        const tf2::Vector3 delta_axis(
-            current_desired_velocity_.angular.x / angular_speed,
-            current_desired_velocity_.angular.y / angular_speed,
-            current_desired_velocity_.angular.z / angular_speed
-        );
-        tf2::Quaternion delta_quaternion(delta_axis, delta_angle);
-        updated_orientation = current_quaternion * delta_quaternion;
-    }
-    updated_orientation.normalize();
-    crrent_desired_position_.pose.orientation.x = updated_orientation.x();
-    crrent_desired_position_.pose.orientation.y = updated_orientation.y();
-    crrent_desired_position_.pose.orientation.z = updated_orientation.z();
-    crrent_desired_position_.pose.orientation.w = updated_orientation.w();
+    tf2::Quaternion delta_q;
+    delta_q.setRPY(
+        current_desired_velocity_.angular.x * dt_,
+        current_desired_velocity_.angular.y * dt_,
+        current_desired_velocity_.angular.z * dt_
+    );
+    desired_q = desired_q * delta_q;
+    desired_q.normalize();
+
+    crrent_desired_position_.pose.orientation.x = desired_q.x();
+    crrent_desired_position_.pose.orientation.y = desired_q.y();
+    crrent_desired_position_.pose.orientation.z = desired_q.z();
+    crrent_desired_position_.pose.orientation.w = desired_q.w();
 
     const double q_norm = std::sqrt(
         crrent_desired_position_.pose.orientation.x * crrent_desired_position_.pose.orientation.x +
@@ -661,7 +688,6 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     initial_trajectory_point_.acceleration.angular.x = current_desired_acceleration.angular.x;
     initial_trajectory_point_.acceleration.angular.y = current_desired_acceleration.angular.y;
     initial_trajectory_point_.acceleration.angular.z = current_desired_acceleration.angular.z;
-    initial_trajectory_point_.timestamp = node_->get_clock()->now();
 
     last_desired_velocity_ = current_desired_velocity_;
     
@@ -685,24 +711,31 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     }
     // 1. 从末端位姿构建KDL::Frame
     const auto& pose = initial_trajectory_point_.pose.pose;
-    tf2::Quaternion target_quaternion(
-        pose.orientation.x,
-        pose.orientation.y,
-        pose.orientation.z,
-        pose.orientation.w
+
+    const double q_norm = std::sqrt(
+        pose.orientation.x * pose.orientation.x +
+        pose.orientation.y * pose.orientation.y +
+        pose.orientation.z * pose.orientation.z +
+        pose.orientation.w * pose.orientation.w
     );
 
-    const double raw_quaternion_norm = target_quaternion.length();
-    if (raw_quaternion_norm < 1e-9) {
-        RCLCPP_ERROR(node_->get_logger(), "目标姿态四元数范数过小，放弃本次IK求解");
-        return false;
+    if (q_norm < 1e-9 ||
+        !std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) || !std::isfinite(pose.position.z) ||
+        !std::isfinite(pose.orientation.x) || !std::isfinite(pose.orientation.y) ||
+        !std::isfinite(pose.orientation.z) || !std::isfinite(pose.orientation.w)) {
+        RCLCPP_ERROR(node_->get_logger(),
+            "目标位姿非法，跳过IK: pos=(%.6f, %.6f, %.6f), quat=(%.6f, %.6f, %.6f, %.6f), |q|=%.9f",
+            pose.position.x, pose.position.y, pose.position.z,
+            pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w, q_norm);
+        return;
     }
-    target_quaternion.normalize();
 
     KDL::Frame target_frame(
         KDL::Rotation::Quaternion(
-            target_quaternion.x(), target_quaternion.y(),
-            target_quaternion.z(), target_quaternion.w()
+            pose.orientation.x / q_norm,
+            pose.orientation.y / q_norm,
+            pose.orientation.z / q_norm,
+            pose.orientation.w / q_norm
         ),
         KDL::Vector(pose.position.x, pose.position.y, pose.position.z)
     );
@@ -755,17 +788,11 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
         return false;
     }
 
-    RCLCPP_INFO(node_->get_logger(),
-        "IK seed source=%s, q_init=[%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-        seed_source.c_str(),
-        q_init(0), q_init(1), q_init(2), q_init(3), q_init(4), q_init(5));
+    KDL::JntArray q_result(q_init.rows());
 
-    q_result.resize(q_init.rows());
-
-    // 3. IK求解关节位置: 当前关节初值 -> 上次成功解初值 -> 位置优先IK
+    // 3. IK求解关节位置（优先使用当前关节，再回退到上次成功解作为初值）
     int ik_result = std::numeric_limits<int>::min();
     ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_result);
-
     if (ik_result < 0 && has_last_successful_joint_positions_ &&
         last_successful_joint_positions_.rows() == q_init.rows()) {
         KDL::JntArray q_retry(q_init.rows());
@@ -791,27 +818,6 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
             q_retry = last_successful_joint_positions_;
             ik_result = ik_solver_position_priority_->CartToJnt(q_retry, target_frame, q_result);
             RCLCPP_WARN(node_->get_logger(), "位置优先IK使用当前关节初值失败，已尝试上次成功解作为初值");
-        }
-    }
-
-    if (ik_result < 0) {
-        const double active_rot_tolerance =
-            consecutive_ik_failures_ >= ik_fail_relax_after_n_
-                ? ik_orientation_tolerance_relaxed_rad_
-                : ik_orientation_tolerance_rad_;
-        const bool accept_near_solution =
-            ik_solver_position_priority_->lastTransDiff <= ik_position_tolerance_m_ &&
-            ik_solver_position_priority_->lastRotDiff <= active_rot_tolerance;
-
-        if (accept_near_solution) {
-            RCLCPP_WARN(node_->get_logger(),
-                "IK未严格收敛但已满足容忍阈值，接受近似解: trans=%.6f<=%.6f, rot=%.6f<=%.6f (fail_count=%d)",
-                ik_solver_position_priority_->lastTransDiff,
-                ik_position_tolerance_m_,
-                ik_solver_position_priority_->lastRotDiff,
-                active_rot_tolerance,
-                consecutive_ik_failures_);
-            ik_result = 0;
         }
     }
 

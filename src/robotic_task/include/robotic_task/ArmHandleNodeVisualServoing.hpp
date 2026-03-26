@@ -142,6 +142,7 @@ private:
     KDL::Tree kdl_tree_;
     std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
     std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_position_priority_;
+    std::shared_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_position_priority_;
     std::shared_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;
     
     // 关节状态
