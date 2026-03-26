@@ -121,10 +121,6 @@ bool VisualServoingArmHandleNode::initKDL() {
     l_pos_priority << 1.0, 1.0, 1.0, 1e-4, 1e-4, 1e-4;
     ik_solver_position_priority_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(
         kdl_chain_, l_pos_priority, 1E-5, 500, 1E-15);
-    Eigen::Matrix<double, 6, 1> l_pos_priority;
-    l_pos_priority << 1.0, 1.0, 1.0, 1e-4, 1e-4, 1e-4;
-    ik_solver_position_priority_ = std::make_shared<KDL::ChainIkSolverPos_LMA>(
-        kdl_chain_, l_pos_priority, 1E-5, 500, 1E-15);
     
     // 创建雅可比求解器
     jacobian_solver_ = std::make_shared<KDL::ChainJntToJacSolver>(kdl_chain_);
@@ -561,6 +557,8 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     current_desired_velocity_.angular.y = (final_pitch - pitch) * kp_;
     current_desired_velocity_.angular.z = (final_yaw - yaw) * kp_;
 
+    double relative_angle = std::acos(std::clamp(final_quaternion.dot(current_quaternion), -1.0, 1.0)) * 2.0;
+
     RCLCPP_DEBUG_THROTTLE(
         node_->get_logger(),
         *node_->get_clock(),
@@ -727,7 +725,7 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
             "目标位姿非法，跳过IK: pos=(%.6f, %.6f, %.6f), quat=(%.6f, %.6f, %.6f, %.6f), |q|=%.9f",
             pose.position.x, pose.position.y, pose.position.z,
             pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w, q_norm);
-        return;
+        return false;
     }
 
     KDL::Frame target_frame(
@@ -744,7 +742,7 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     RCLCPP_INFO(node_->get_logger(),
         "KDL Frame position: x=%.3f, y=%.3f, z=%.3f. KDL Frame orientation (RPY): roll=%.3f, pitch=%.3f, yaw=%.3f, raw|q|=%.6f",
         target_frame.p.x(), target_frame.p.y(), target_frame.p.z(),
-        roll, pitch, yaw, raw_quaternion_norm
+        roll, pitch, yaw, q_norm
     );
 
     
@@ -788,10 +786,22 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
         return false;
     }
 
-    KDL::JntArray q_result(q_init.rows());
+    const unsigned int expected_joint_count = kdl_chain_.getNrOfJoints();
+    if (q_init.rows() != expected_joint_count) {
+        ++consecutive_ik_failures_;
+        RCLCPP_ERROR(
+            node_->get_logger(),
+            "IK初值维度错误: seed_source=%s, q_init=%u, expected=%u",
+            seed_source.c_str(),
+            q_init.rows(),
+            expected_joint_count
+        );
+        return false;
+    }
 
     // 3. IK求解关节位置（优先使用当前关节，再回退到上次成功解作为初值）
     int ik_result = std::numeric_limits<int>::min();
+    q_result.resize(expected_joint_count);
     ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_result);
     if (ik_result < 0 && has_last_successful_joint_positions_ &&
         last_successful_joint_positions_.rows() == q_init.rows()) {

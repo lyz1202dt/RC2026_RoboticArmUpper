@@ -28,6 +28,7 @@
 #include <thread>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -61,7 +62,7 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
     tf_buffer_= std::make_shared<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     vision_subscription_ = node->create_subscription<geometry_msgs::msg::PoseStamped>(
-    "robotic_task_", 10,
+    "robotic_task_", rclcpp::SensorDataQoS(),
     std::bind(&ArmHandleNode::visionCallback, this, std::placeholders::_1));
 
 
@@ -450,15 +451,68 @@ void ArmHandleNode::arm_catch_task_handle() {
             }
         } else if (current_task_type == ROBOTIC_ARM_TASK_CATCH_TARGET) { // 将地上的KFS吸起来放到车上（或者只是吸起来）
 
+            auto fetch_latest_target_pose = [this](geometry_msgs::msg::Pose &pose_out) {
+                std::lock_guard<std::mutex> lock(vision_target_mutex_);
+                if (!has_vision_target_) {
+                    return false;
+                }
+                pose_out = detected_target_pose_on_base_link_;
+                return true;
+            };
+
+            geometry_msgs::msg::Pose target_pose_on_base_link;
+            int wait_count = 0;
+            while (rclcpp::ok() && !fetch_latest_target_pose(target_pose_on_base_link) && wait_count < 40) {
+                if (wait_count % 10 == 0) {
+                    RCLCPP_WARN(node->get_logger(), "等待视觉话题 robotic_task_ 更新目标位姿...");
+                }
+                std::this_thread::sleep_for(50ms);
+                ++wait_count;
+            }
+
+            if (!fetch_latest_target_pose(target_pose_on_base_link)) {
+                finished_msg->kfs_num = current_kfs_num;
+                finished_msg->reason = "未收到视觉话题目标位姿，抓取任务中止";
+                current_goal_handle->abort(finished_msg);
+                continue;
+            }
+
+            const double target_xy_norm = std::hypot(
+                target_pose_on_base_link.position.x,
+                target_pose_on_base_link.position.y
+            );
+            const bool target_finite =
+                std::isfinite(target_pose_on_base_link.position.x) &&
+                std::isfinite(target_pose_on_base_link.position.y) &&
+                std::isfinite(target_pose_on_base_link.position.z);
+            const bool target_in_workspace =
+                (target_xy_norm >= 0.08 && target_xy_norm <= 0.85) &&
+                (target_pose_on_base_link.position.z >= -0.05 && target_pose_on_base_link.position.z <= 0.70);
+
+            if (!target_finite || !target_in_workspace) {
+                finished_msg->kfs_num = current_kfs_num;
+                finished_msg->reason = "视觉目标超出机械臂工作空间或数值非法，抓取任务中止";
+                RCLCPP_WARN(
+                    node->get_logger(),
+                    "目标无效: Pos(%.3f, %.3f, %.3f), r_xy=%.3f",
+                    target_pose_on_base_link.position.x,
+                    target_pose_on_base_link.position.y,
+                    target_pose_on_base_link.position.z,
+                    target_xy_norm
+                );
+                current_goal_handle->abort(finished_msg);
+                continue;
+            }
+
             // 步骤一：添加目标KFS碰撞体
-            auto temp_target=task_target_pos;
+            auto temp_target=target_pose_on_base_link;
             RCLCPP_INFO(node->get_logger(), "转换后目标位姿: Pos(%lf,%lf,%lf), Rot(%lf,%lf,%lf,%lf)",
-            task_target_pos.position.x, task_target_pos.position.y, task_target_pos.position.z,
-            task_target_pos.orientation.w, task_target_pos.orientation.x, 
-            task_target_pos.orientation.y, task_target_pos.orientation.z);
+            target_pose_on_base_link.position.x, target_pose_on_base_link.position.y, target_pose_on_base_link.position.z,
+            target_pose_on_base_link.orientation.w, target_pose_on_base_link.orientation.x, 
+            target_pose_on_base_link.orientation.y, target_pose_on_base_link.orientation.z);
             
                 // 为目标KFS添加碰撞体
-            add_kfs_collision(temp_target, "target_kfs", move_group_interface->getPlanningFrame()); 
+            // add_kfs_collision(temp_target, "target_kfs", move_group_interface->getPlanningFrame()); 
 
             auto current_pose = move_group_interface->getCurrentPose();
 
@@ -466,7 +520,34 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 步骤二：计算准备位置并规划移动
                 // 规划路径到目标位置前,调用 calculate_prepare_pos 函数计算目标位置前方的准备位置
             geometry_msgs::msg::Pose grasp_pose;
-            auto prepare_pos = calculate_prepare_pos(task_target_pos, 0.1, grasp_pose);  
+            RCLCPP_INFO(node->get_logger(),"计算准备位置");
+            auto prepare_pos = calculate_prepare_pos(target_pose_on_base_link, 0.1, grasp_pose);  
+            auto fallback_prepare_pos = prepare_pos;
+
+            // 兜底位姿：采用更保守的位置与当前末端朝向，降低目标采样失败概率
+            {
+                Eigen::Vector3d target_vec(
+                    target_pose_on_base_link.position.x,
+                    target_pose_on_base_link.position.y,
+                    target_pose_on_base_link.position.z
+                );
+                Eigen::Vector3d dir_xy(target_vec.x(), target_vec.y(), 0.0);
+                if (dir_xy.norm() < 1e-6) {
+                    dir_xy = Eigen::Vector3d(1.0, 0.0, 0.0);
+                } else {
+                    dir_xy.normalize();
+                }
+
+                const double retreat_distance = 0.12;
+                fallback_prepare_pos.position.x = target_pose_on_base_link.position.x - retreat_distance * dir_xy.x();
+                fallback_prepare_pos.position.y = target_pose_on_base_link.position.y - retreat_distance * dir_xy.y();
+                fallback_prepare_pos.position.z = target_pose_on_base_link.position.z + 0.05;
+
+                // 限制高度，避免无效/危险的目标高度
+                fallback_prepare_pos.position.z = std::max(0.06, std::min(0.60, fallback_prepare_pos.position.z));
+                fallback_prepare_pos.orientation = current_pose.pose.orientation;
+            }
+
             RCLCPP_INFO(node->get_logger(), "计算得到的准备位置: Pos(%lf,%lf,%lf), ORI(w:%f,x:%f,y:%f,z:%f)",
                 prepare_pos.position.x, prepare_pos.position.y, prepare_pos.position.z,
                 prepare_pos.orientation.w, prepare_pos.orientation.x, prepare_pos.orientation.y, prepare_pos.orientation.z);
@@ -503,7 +584,7 @@ void ArmHandleNode::arm_catch_task_handle() {
                 continue;
 
             //    // ==================== 尝试在规划准备位置之前删除 kfs 的碰撞 ===========================
-            remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
+            // remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
 
             //     // ==================== 对规划位置的逆运动学检查 =========================
             // move_group_interface->setPoseTarget(grasp_pose);
@@ -526,6 +607,21 @@ void ArmHandleNode::arm_catch_task_handle() {
                 RCLCPP_WARN(node->get_logger(), "准备位置规划失败，重行规划%d次", count+1);
                 count ++ ;
             }
+
+            if (!success) {
+                RCLCPP_WARN(node->get_logger(), "主准备位姿规划失败，尝试回退准备位姿");
+                move_group_interface->clearPoseTargets();
+                move_group_interface->setStartStateToCurrentState();
+                move_group_interface->setPoseTarget(fallback_prepare_pos);
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <= MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "回退准备位姿规划失败，重行规划%d次", count+1);
+                    count ++;
+                }
+            }
+
             if (!success) {
                 RCLCPP_WARN(node->get_logger(), "准备位姿规划失败，尝试位置优先规划");
                 move_group_interface->clearPoseTargets();
@@ -541,6 +637,24 @@ void ArmHandleNode::arm_catch_task_handle() {
                     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                     RCLCPP_WARN(node->get_logger(), "准备位置(位置优先)规划失败，重行规划%d次", count+1);
                     count ++ ;
+                }
+            }
+
+            if (!success) {
+                RCLCPP_WARN(node->get_logger(), "主位置目标仍失败，尝试回退位置目标");
+                move_group_interface->clearPoseTargets();
+                move_group_interface->setStartStateToCurrentState();
+                move_group_interface->setPositionTarget(
+                    fallback_prepare_pos.position.x,
+                    fallback_prepare_pos.position.y,
+                    fallback_prepare_pos.position.z
+                );
+                success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                count = 0;
+                while(success == false && count <= MAX_COUNT_){
+                    success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+                    RCLCPP_WARN(node->get_logger(), "回退位置目标规划失败，重行规划%d次", count+1);
+                    count ++;
                 }
             }
             if(success){
@@ -603,16 +717,16 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 以 100Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
             rclcpp::Rate loop_rate(100.0); // 100Hz
 
-            auto calculate_distance_to_target = [this](const geometry_msgs::msg::PoseStamped& pose) {
+            auto calculate_distance_to_target = [&target_pose_on_base_link](const geometry_msgs::msg::PoseStamped& pose) {
                 const Eigen::Vector3d current_position(
                     pose.pose.position.x,
                     pose.pose.position.y,
                     pose.pose.position.z
                 );
                 const Eigen::Vector3d target_position(
-                    detected_target_pose_on_base_link_.position.x,
-                    detected_target_pose_on_base_link_.position.y,
-                    detected_target_pose_on_base_link_.position.z
+                    target_pose_on_base_link.position.x,
+                    target_pose_on_base_link.position.y,
+                    target_pose_on_base_link.position.z
                 );
                 return (target_position - current_position).norm();
             };
@@ -621,29 +735,28 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
+            const int MAX_jjjjjj = 10;
+            int jjjjjj = 0;
 
 
-
-            while (rclcpp::ok() && distance_ > SWITCH_DISTANCE_THRESHOLD) { // 当末端与目标的距离大于阈值时持续进行视觉伺服调整
+            while (rclcpp::ok() && distance_ > SWITCH_DISTANCE_THRESHOLD && jjjjjj < MAX_jjjjjj) { // 当末端与目标的距离大于阈值时持续进行视觉伺服调整
+                
+                jjjjjj++;
+                
                 if (cancle_current_task) {
                     RCLCPP_WARN(node->get_logger(), "视觉伺服被取消");
                     break;
                 }
 
-                geometry_msgs::msg::Pose vision_target_in_camera;
-                bool has_vision_target = false;
-                {
-                    std::lock_guard<std::mutex> lock(vision_target_mutex_);
-                    if (has_vision_target_) {
-                        vision_target_in_camera = detected_target_pose_;
-                        has_vision_target = true;
-                    }
+                geometry_msgs::msg::Pose latest_target_pose;
+                if (fetch_latest_target_pose(latest_target_pose)) {
+                    target_pose_on_base_link = latest_target_pose;
                 }
 
 
 
                 auto current_pose_now = move_group_interface->getCurrentPose();
-                calculate_prepare_pos(detected_target_pose_on_base_link_, 0.05, grasp_pose); // 10Hz 更新目标位置
+                calculate_prepare_pos(target_pose_on_base_link, 0.05, grasp_pose); // 10Hz 更新目标位置
 
                 geometry_msgs::msg::PoseStamped final_desired_position;
                 final_desired_position.header.frame_id = "base_link";
@@ -674,7 +787,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
                 RCLCPP_INFO(node->get_logger(), "当前末端位置: (%.3f, %.3f, %.3f), 目标位置: (%.3f, %.3f, %.3f), 距离: %.3f",
                     current_pose.pose.position.x, current_pose.pose.position.y, current_pose.pose.position.z,
-                    detected_target_pose_on_base_link_.position.x, detected_target_pose_on_base_link_.position.y, detected_target_pose_on_base_link_.position.z,
+                    target_pose_on_base_link.position.x, target_pose_on_base_link.position.y, target_pose_on_base_link.position.z,
                     distance_); 
                 
                 loop_rate.sleep();

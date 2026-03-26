@@ -1,5 +1,6 @@
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/timer.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -30,54 +31,84 @@ public:
         timer_ = this->create_wall_timer(
             std::chrono::seconds(10), // 100 ms
             std::bind(&ActionTestNode::send_goal, this) // [this]() {
-            // [this]() {
-            //     geometry_msgs::msg::PoseStamped pose_msg;
-            //     pose_msg.header.stamp = this->now();
-            //     pose_msg.header.frame_id = "base_link";
-            //     pose_msg.pose.position.x = 0.5;
-            //     pose_msg.pose.position.y = -0.2;
-            //     pose_msg.pose.position.z = 0.0;
-            //     pose_msg.pose.orientation.w = 1;
-            //     pose_msg.pose.orientation.x = 0;   
-            //     pose_msg.pose.orientation.y = 0;
-            //     pose_msg.pose.orientation.z = 0;  
-
-            //     try {
-            //         auto transformed_pose = tf_buffer_->transform(
-            //             pose_msg,
-            //             "camera_link",
-            //             tf2::durationFromSec(1.0));
-            //         pose_pub_->publish(transformed_pose);
-            //         RCLCPP_INFO_THROTTLE(
-            //             this->get_logger(),
-            //             *this->get_clock(),
-            //             5000,
-            //             "已将 base_link 下位姿转换到 camera_link: [%.3f, %.3f, %.3f],[%.3f, %.3f, %.3f, %.3f]",
-            //             transformed_pose.pose.position.x,
-            //             transformed_pose.pose.position.y,
-            //             transformed_pose.pose.position.z,
-            //             transformed_pose.pose.orientation.w,
-            //             transformed_pose.pose.orientation.x,
-            //             transformed_pose.pose.orientation.y,
-            //             transformed_pose.pose.orientation.z
-            //         );
-            //     } catch (tf2::TransformException &ex) {
-            //         RCLCPP_ERROR(this->get_logger(), "坐标变换失败: %s", ex.what());
-            //     }
-            // }
         );
 
+        timer_2_ = this->create_wall_timer(
+            std::chrono::milliseconds(50), // 20 Hz
+            
+            [this]() {
+                publish_pose_topic_once();
+            }
+        );
+
+        publish_pose_topic_once();
         send_goal();
     }
 
 private:
+    geometry_msgs::msg::Pose make_test_pose() const
+    {
+        geometry_msgs::msg::Pose pose;
+        pose.position.x = 0.8;
+        pose.position.y = 0.0;
+        pose.position.z = 0.5;
+        pose.orientation.w = 1.0;
+        pose.orientation.x = 0.0;
+        pose.orientation.y = 0.0;
+        pose.orientation.z = 0.0;
+        return pose;
+    }
+
     rclcpp_action::Client<Catch>::SharedPtr client_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_2_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
     bool goal_sent_ = false;
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     geometry_msgs::msg::TransformStamped transform_stamped_;
+
+    void publish_pose_topic_once()
+    {
+        geometry_msgs::msg::PoseStamped pose_msg;
+        pose_msg.header.stamp = this->now();
+        pose_msg.header.frame_id = "base_link";
+
+        pose_msg.pose = make_test_pose();
+
+        try {
+            // 使用最新可用 TF，避免因时间戳略早于 TF 缓存起点导致 past extrapolation。
+            auto tf = tf_buffer_->lookupTransform(
+                "camera_link",
+                "base_link",
+                tf2::TimePointZero,
+                tf2::durationFromSec(0.2));
+
+            geometry_msgs::msg::PoseStamped transformed_pose;
+            tf2::doTransform(pose_msg, transformed_pose, tf);
+            pose_pub_->publish(transformed_pose);
+            RCLCPP_INFO_THROTTLE(
+                this->get_logger(),
+                *this->get_clock(),
+                5000,
+                "已将 base_link 下位姿转换到 camera_link: [%.3f, %.3f, %.3f],[%.3f, %.3f, %.3f, %.3f]",
+                transformed_pose.pose.position.x,
+                transformed_pose.pose.position.y,
+                transformed_pose.pose.position.z,
+                transformed_pose.pose.orientation.w,
+                transformed_pose.pose.orientation.x,
+                transformed_pose.pose.orientation.y,
+                transformed_pose.pose.orientation.z
+            );
+        } catch (tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(),
+                *this->get_clock(),
+                2000,
+                "坐标变换失败(等待TF就绪): %s",
+                ex.what());
+        }
+    }
 
 
     // 目标发送函数详解
@@ -99,19 +130,8 @@ private:
 
         // ===== 填写目标位姿（camera_link 下的一个简单坐标）=====
 
-
-        //模拟的抓取位置姿
-            // 在 rviz2 中的显示为z轴方向
-        goal_msg.target_pose.position.x = 0.0;//0.664748;
-            // 在 rviz2 中的显示为y轴方向
-        goal_msg.target_pose.position.y = -0.3;//-0.001824;
-            // 在 rviz2 中的显示为x轴方向
-        goal_msg.target_pose.position.z = 0.7;
-
-        goal_msg.target_pose.orientation.w = 1.0; // 0.004481;  // 单位四元数
-        goal_msg.target_pose.orientation.x = 0.0; // 0.708322;
-        goal_msg.target_pose.orientation.y = 0.0; // -0.004257;
-        goal_msg.target_pose.orientation.z = 0.0; // -0.705862;
+        // 复用与 timer_2_ 相同的数据源，确保发布位姿与 action 目标一致
+        goal_msg.target_pose = make_test_pose();
 
         
 

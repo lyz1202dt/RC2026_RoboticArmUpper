@@ -452,8 +452,8 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             q_kdl(i)   = (i < target.positions.size()) ? target.positions[i] : 0.0;
             dq_kdl(i)  = (i < target.velocities.size()) ? target.velocities[i] : 0.0;
             ddq_kdl(i) = (i < target.accelerations.size()) ? target.accelerations[i] : 0.0;
-            std::cout << "[DEBUG] q_kdl(" << i << ") = " << q_kdl(i) << std::endl;
-            std::cout << "[DEBUG] dq_kdl(" << i << ") = " << dq_kdl(i) << std::endl;
+            std::cout << "[DEBUG] q_kdl(" << i << ") = " << q_kdl(i) << "   ";
+            std::cout << "[DEBUG] dq_kdl(" << i << ") = " << dq_kdl(i) << "   ";
             std::cout << "[DEBUG] ddq_kdl(" << i << ") = " << ddq_kdl(i) << std::endl;
             std::cout << "[DEBUG] ====================" << std::endl;
         }
@@ -469,8 +469,8 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             command_interfaces_[i * 3 + 0].set_value(pos);
             command_interfaces_[i * 3 + 1].set_value(vel);
             command_interfaces_[i * 3 + 2].set_value(eff);
-            std::cout << "[DEBUG] pos(" << i << ") = " << pos << std::endl;
-            std::cout << "[DEBUG] vel(" << i << ") = " << vel << std::endl;
+            std::cout << "[DEBUG] pos(" << i << ") = " << pos << "   ";
+            std::cout << "[DEBUG] vel(" << i << ") = " << vel << "   ";
             std::cout << "[DEBUG] eff(" << i << ") = " << eff << std::endl;
             std::cout << "[DEBUG] ====================" << std::endl;
         }
