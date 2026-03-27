@@ -118,12 +118,19 @@ private:
     };
 
 
-    geometry_msgs::msg::Pose calculate_prepare_pos(const geometry_msgs::msg::Pose &box_pos, double approach_distance, geometry_msgs::msg::Pose &grasp_pose, ApproachMode mode = ApproachMode::AUTO);
+    geometry_msgs::msg::Pose calculate_prepare_pos(
+        const geometry_msgs::msg::Pose &box_pos, 
+        double approach_distance, 
+        geometry_msgs::msg::Pose &grasp_pose);
     
     
     bool add_attached_kfs_collision();
     bool remove_attached_kfs_collision();
+
+
     bool add_kfs_collision(const geometry_msgs::msg::Pose &pos,const std::string &object_id,const std::string &fram_id);
+
+    
     bool remove_kfs_collision(const std::string &object_id,const std::string &fram_id);
 
     bool set_air_pump(bool enable); // 设置气泵参数
@@ -155,7 +162,7 @@ private:
     // 关节空间 
     //  */
     // 规划参数配置
-    const double SWITCH_DISTANCE_THRESHOLD = 0.01;  // 切换距离阈值（米）
+    const double SWITCH_DISTANCE_THRESHOLD = 0.02;  // 切换距离阈值（米）
     const double CARTESIAN_GOAL_TOLERANCE = 0.001;   // 笛卡尔空间目标容差
     const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差`
     const double VELOCITY_SCALING = 0.4;             // 速度缩放因子
@@ -165,10 +172,11 @@ private:
     // moveit::planning_interface::PlanningSceneInterface planning_scene_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_; // 坐标系变换
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_; // 接收和订阅坐标变换消息
-    geometry_msgs::msg::Pose calculate_prepare_pos_with_orientation(const geometry_msgs::msg::Pose& box_pos, 
+    geometry_msgs::msg::Pose calculate_prepare_pos_with_orientation(
+    const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
-    geometry_msgs::msg::Pose &grasp_pose, 
-    ApproachMode mode);
+    geometry_msgs::msg::Pose &grasp_pose
+    );
 
     int count ; // 次数可以是任何事情的次数
     const int MAX_COUNT_ = 100;

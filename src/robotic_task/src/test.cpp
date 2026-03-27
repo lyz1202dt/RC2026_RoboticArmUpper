@@ -49,7 +49,7 @@ private:
     geometry_msgs::msg::Pose make_test_pose() const
     {
         geometry_msgs::msg::Pose pose;
-        pose.position.x = 0.8;
+        pose.position.x = 0.7;
         pose.position.y = 0.0;
         pose.position.z = 0.5;
         pose.orientation.w = 1.0;

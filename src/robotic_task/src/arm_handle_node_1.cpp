@@ -71,279 +71,127 @@ using namespace std::chrono_literals;
 geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
-    geometry_msgs::msg::Pose &grasp_pose, 
-    ApproachMode mode) 
+    geometry_msgs::msg::Pose &grasp_pose
+    ) 
 {
-    RCLCPP_INFO(node->get_logger(), 
-        "传入的box_pos: POS(%f, %f, %f), ORI(w:%f, x:%f, y:%f, z:%f)", 
-        box_pos.position.x, box_pos.position.y, box_pos.position.z,
-        box_pos.orientation.w, box_pos.orientation.x, 
-        box_pos.orientation.y, box_pos.orientation.z);
+    constexpr double kBoxSize = 0.35;
+    constexpr double kHalfSize = kBoxSize * 0.5;
+    constexpr double kPrepareDistance = 0.05;  // 表面外 5cm
+    constexpr double kGraspInsideDistance = 0.02;     // 表面内 2cm
 
-    // ========== 步骤1：提取物体位置和方向 ==========
-    Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
-    Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, 
-                         box_pos.orientation.y, box_pos.orientation.z);
-    if (q.norm() < 1e-6) {
-        RCLCPP_WARN(node->get_logger(), "目标姿态四元数无效，回退为单位四元数");
-        q = Eigen::Quaterniond::Identity();
+    (void)approach_distance;
+
+    const Eigen::Vector3d center(
+        box_pos.position.x,
+        box_pos.position.y,
+        box_pos.position.z
+    );
+
+    // 机器人位于原点，取“机器人->物块中心”的XY方向。
+    Eigen::Vector2d robot_to_box_xy(center.x(), center.y());
+    if (robot_to_box_xy.norm() < 1e-9) {
+        robot_to_box_xy = Eigen::Vector2d(1.0, 0.0);
     } else {
-        q.normalize();
-    }
-    Eigen::Matrix3d R = q.toRotationMatrix();
-
-    // ========== 步骤2：计算物体表面法线 ==========
-    // 假设物体表面法线：使用物体的局部Z轴
-    Eigen::Vector3d surface_normal = R * Eigen::Vector3d(0.0, 0.0, 1.0);
-    if (surface_normal.norm() < 1e-6) {
-        surface_normal = Eigen::Vector3d(1.0, 0.0, 0.0);
-    } else {
-        surface_normal.normalize();
-    }
-    RCLCPP_INFO(node->get_logger(), "物体表面法线(局部Z轴) = (%f, %f, %f)",
-                surface_normal.x(), surface_normal.y(), surface_normal.z());
-
-    // 调整表面法线指向物体外部
-    Eigen::Vector3d to_robot_base = -object_center;
-    if (surface_normal.dot(to_robot_base) < 0.0) {
-        surface_normal = -surface_normal;
-        RCLCPP_INFO(node->get_logger(), "表面法线调整为指向外部 = (%f, %f, %f)",
-                    surface_normal.x(), surface_normal.y(), surface_normal.z());
+        robot_to_box_xy.normalize();
     }
 
-    // ========== 步骤3：计算物体表面位置 ==========
-    // 表面位置 = 物体中心 + 法线方向 × 物体半尺寸
-    const double object_half_size = 0.175;  // 物体从中心到表面的距离
-    Eigen::Vector3d surface_position = object_center + object_half_size * surface_normal;
-    RCLCPP_INFO(node->get_logger(), "物体表面位置 surface_position = (%f, %f, %f)",
-                surface_position.x(), surface_position.y(), surface_position.z());
+    const Eigen::Vector3d inward_dir(robot_to_box_xy.x(), robot_to_box_xy.y(), 0.0);
 
-    // ========== 步骤4：计算抓取位置和准备位置 ==========
-    // 需求：抓取位置在表面内5cm，准备位置在表面外5cm
-    const double inside_offset = 0.05;   // 表面内5cm
-    const double outside_offset = (approach_distance > 0.02) ? approach_distance : 0.02;  // 最少2cm，避免贴脸目标
-    
-    // 抓取位置：从表面向物体内部偏移5cm
-    Eigen::Vector3d grasp_position = surface_position - inside_offset * surface_normal;
-    
-    // 准备位置：从表面向物体外部偏移5cm
-    Eigen::Vector3d prepare_position = surface_position + outside_offset * surface_normal;
-    
-    RCLCPP_INFO(node->get_logger(), "抓取位置(表面内5cm) = (%f, %f, %f)",
-                grasp_position.x(), grasp_position.y(), grasp_position.z());
-    RCLCPP_INFO(node->get_logger(), "准备位置(表面外5cm) = (%f, %f, %f)",
-                prepare_position.x(), prepare_position.y(), prepare_position.z());
+    // 靠近机器人的侧面中心点。
+    const Eigen::Vector3d side_center = center - inward_dir * kHalfSize;
 
-    // ========== 步骤5：确定机器人相对于物体的位置 ==========
-    // 假设机器人基座在原点 (0, 0, 0)
-    Eigen::Vector3d robot_base(0.0, 0.0, 0.0);
-    Eigen::Vector3d robot_to_object = object_center - robot_base;
-    Eigen::Vector3d robot_side_direction;
-    robot_side_direction = robot_to_object;
-    robot_side_direction.z() = 0;  // 忽略z轴，只考虑水平面
-    if (robot_side_direction.norm() < 1e-6) {
-        if (has_last_prepare_orientation_) {
-            Eigen::Vector3d last_away = last_prepare_orientation_.toRotationMatrix().col(0);
-            Eigen::Vector3d fallback_side = -last_away;
-            fallback_side.z() = 0.0;
-            if (fallback_side.norm() > 1e-6) {
-                robot_side_direction = fallback_side.normalized();
-                RCLCPP_WARN(node->get_logger(), "机器人与目标几乎重合，沿用上一帧水平朝向维持连续性");
-            } else {
-                robot_side_direction = Eigen::Vector3d(1.0, 0.0, 0.0);
-            }
-        } else {
-            robot_side_direction = Eigen::Vector3d(1.0, 0.0, 0.0);
-        }
-    } else {
-        robot_side_direction.normalize();
-    }
-    
-    // 远离机器人的方向 = -robot_side_direction
-    Eigen::Vector3d away_from_robot = -robot_side_direction;
-    
-    RCLCPP_INFO(node->get_logger(), "机器人方向向量(从机器人看物体) = (%f, %f, %f)",
-                robot_to_object.x(), robot_to_object.y(), robot_to_object.z());
-    RCLCPP_INFO(node->get_logger(), "机器人侧面方向(指向物体) = (%f, %f, %f)",
-                robot_side_direction.x(), robot_side_direction.y(), robot_side_direction.z());
-    RCLCPP_INFO(node->get_logger(), "远离机器人方向 = (%f, %f, %f)",
-                away_from_robot.x(), away_from_robot.y(), away_from_robot.z());
+    // 预抓取：表面外；抓取：表面内。
+    const Eigen::Vector3d prepare_pos_vec = side_center - inward_dir * kPrepareDistance;
+    const Eigen::Vector3d grasp_pos_vec = side_center + inward_dir * kGraspInsideDistance;
 
-    // ========== 步骤6：计算末端执行器姿态 ==========
-    // 关键需求：吸盘应该朝向远离机械臂的方向
-    // 且垂直于物体表面
-    // 且在水平面上（与机器人方向在同一平面）
-    
-    Eigen::Vector3d eef_x_axis;  // 吸盘朝向（垂直于表面，远离机器人）
-    Eigen::Vector3d eef_y_axis;
-    Eigen::Vector3d eef_z_axis;
+    // 固定侧抓姿态：末端朝向水平并垂直于物块侧面。
+    tf2::Quaternion q;
+    q.setRPY(0.0, -M_PI_2, 0.0);
+    q.normalize();
 
-    // 计算吸盘方向（末端X轴）
-    // 需求：1. 垂直于 surface_normal；2. 在水平面上；3. 指向 away_from_robot
-    
-    // 方法：使用 away_from_robot 减去其在 surface_normal 上的投影
-    // 这样得到的向量既垂直于 surface_normal，又保留 away_from_robot 的水平分量
-    Eigen::Vector3d suction_dir = away_from_robot - 
-        away_from_robot.dot(surface_normal) * surface_normal;
-    if (suction_dir.norm() < 1e-6) {
-        suction_dir = surface_normal.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
-        if (suction_dir.norm() < 1e-6) {
-            suction_dir = surface_normal.cross(Eigen::Vector3d(1.0, 0.0, 0.0));
-        }
-    }
-    if (suction_dir.norm() < 1e-6) {
-        suction_dir = away_from_robot;
-    }
-    suction_dir.normalize();
-    
-    RCLCPP_INFO(node->get_logger(), "吸盘方向计算 = away_from_robot - 投影 = (%f, %f, %f)",
-                suction_dir.x(), suction_dir.y(), suction_dir.z());
-    
-    // 验证：是否垂直于表面法线
-    double normal_alignment = std::abs(suction_dir.dot(surface_normal));
-    RCLCPP_INFO(node->get_logger(), "吸盘与表面法线垂直度: %f (应为0)", normal_alignment);
-    
-    // 验证：是否在水平面上（z ≈ 0）
-    RCLCPP_INFO(node->get_logger(), "吸盘方向Z分量: %f (应接近0)", suction_dir.z());
-    
-    // 验证：是否指向远离机器人的方向
-    double away_alignment = suction_dir.dot(away_from_robot);
-    RCLCPP_INFO(node->get_logger(), "吸盘与远离机器人方向对齐度: %f (应为1.0)", away_alignment);
-    
-    // 如果验证失败（可能是边界情况），尝试备选方案
-    if (normal_alignment > 0.1 || away_alignment < 0.9 || std::abs(suction_dir.z()) > 0.1) {
-        RCLCPP_WARN(node->get_logger(), "使用备选方案计算吸盘方向");
-        
-        // 备选方案：直接使用叉乘
-        Eigen::Vector3d temp = surface_normal.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
-        if (temp.norm() < 1e-6) {
-            temp = surface_normal.cross(Eigen::Vector3d(1.0, 0.0, 0.0));
-        }
-        temp.normalize();
-        
-        // 选择与 away_from_robot 更接近的方向
-        if (temp.dot(away_from_robot) < 0) {
-            suction_dir = -temp;
-        } else {
-            suction_dir = temp;
-        }
-    }
-    
-    eef_x_axis = suction_dir;
-    RCLCPP_INFO(node->get_logger(), "最终吸盘方向(末端X轴) = (%f, %f, %f)",
-                eef_x_axis.x(), eef_x_axis.y(), eef_x_axis.z());
+    geometry_msgs::msg::Pose prepare_pose;
+    prepare_pose.position.x = prepare_pos_vec.x();
+    prepare_pose.position.y = prepare_pos_vec.y();
+    prepare_pose.position.z = prepare_pos_vec.z();
+    prepare_pose.orientation.w = q.w();
+    prepare_pose.orientation.x = q.x();
+    prepare_pose.orientation.y = q.y();
+    prepare_pose.orientation.z = q.z();
 
-    // ========== 步骤7：计算Y轴和Z轴，保持与X轴正交 ==========
-    Eigen::Vector3d global_x(1.0, 0.0, 0.0);
-    Eigen::Vector3d global_y(0.0, 1.0, 0.0);
-    Eigen::Vector3d global_z(0.0, 0.0, 1.0);
+    grasp_pose.position.x = grasp_pos_vec.x();
+    grasp_pose.position.y = grasp_pos_vec.y();
+    grasp_pose.position.z = grasp_pos_vec.z();
+    grasp_pose.orientation = prepare_pose.orientation;
 
-    // 如果X轴与全局X轴平行，使用全局Y轴
-    if (std::abs(eef_x_axis.dot(global_x)) > 0.9) {
-        eef_y_axis = eef_x_axis.cross(global_y);
-    } else {
-        eef_y_axis = eef_x_axis.cross(global_x);
-    }
-    
-    // 归一化Y轴
-    if (eef_y_axis.norm() < 1e-6) {
-        eef_y_axis = eef_x_axis.cross(global_z);
-    }
-    if (eef_y_axis.norm() < 1e-6) {
-        eef_y_axis = Eigen::Vector3d(0.0, 1.0, 0.0);
-    }
-    eef_y_axis.normalize();
-    RCLCPP_INFO(node->get_logger(), "末端Y轴 = (%f, %f, %f)",
-                eef_y_axis.x(), eef_y_axis.y(), eef_y_axis.z());
+    RCLCPP_INFO_THROTTLE(
+        node->get_logger(),
+        *node->get_clock(),
+        1000,
+        "calculate_prepare_pos: box_center=(%.3f, %.3f, %.3f), side_center=(%.3f, %.3f, %.3f)",
+        center.x(), center.y(), center.z(),
+        side_center.x(), side_center.y(), side_center.z()
+    );
+    RCLCPP_INFO_THROTTLE(
+        node->get_logger(),
+        *node->get_clock(),
+        1000,
+        "calculate_prepare_pos: dir=(%.3f, %.3f, %.3f), prepare_dist=%.3f, prepare=(%.3f, %.3f, %.3f), grasp=(%.3f, %.3f, %.3f), quat=(w:%.4f,x:%.4f,y:%.4f,z:%.4f)",
+        inward_dir.x(), inward_dir.y(), inward_dir.z(),
+        kPrepareDistance,
+        prepare_pos_vec.x(), prepare_pos_vec.y(), prepare_pos_vec.z(),
+        grasp_pos_vec.x(), grasp_pos_vec.y(), grasp_pos_vec.z(),
+        prepare_pose.orientation.w,
+        prepare_pose.orientation.x,
+        prepare_pose.orientation.y,
+        prepare_pose.orientation.z
+    );
 
-    // 计算Z轴（X × Y）
-    eef_z_axis = eef_x_axis.cross(eef_y_axis);
-    eef_z_axis.normalize();
-    RCLCPP_INFO(node->get_logger(), "末端Z轴 = (%f, %f, %f)",
-                eef_z_axis.x(), eef_z_axis.y(), eef_z_axis.z());
+    RCLCPP_INFO_THROTTLE(
+        node->get_logger(),
+        *node->get_clock(),
+        1000,
+        "calculate_prepare_pos: 严格按plan固定预抓取距离5cm、抓取进入2cm"
+    );
 
-    // ========== 步骤8：构造旋转矩阵 ==========
-    Eigen::Matrix3d R_eef;
-    R_eef.col(0) = eef_x_axis;  // 吸盘方向（垂直于表面，远离机器人）
-    R_eef.col(1) = eef_y_axis;
-    R_eef.col(2) = eef_z_axis;
-    Eigen::Quaterniond q_eef(R_eef);
-    q_eef.normalize();
-
-    if (has_last_prepare_orientation_) {
-        if (q_eef.dot(last_prepare_orientation_) < 0.0) {
-            q_eef.coeffs() = -q_eef.coeffs();
-        }
-
-        const double angular_jump = last_prepare_orientation_.angularDistance(q_eef);
-        if (angular_jump > prepare_orientation_max_step_rad_) {
-            const double blend = prepare_orientation_max_step_rad_ / angular_jump;
-            q_eef = last_prepare_orientation_.slerp(blend, q_eef);
-            q_eef.normalize();
-            constexpr double kRadToDeg = 57.29577951308232;
-            RCLCPP_WARN(
-                node->get_logger(),
-                "检测到姿态突跳(%.2f deg)，已限幅到 %.2f deg",
-                angular_jump * kRadToDeg,
-                prepare_orientation_max_step_rad_ * kRadToDeg
-            );
-        }
-    }
-
-    last_prepare_orientation_ = q_eef;
-    has_last_prepare_orientation_ = true;
-
-    // ========== 步骤9：构造返回的Pose消息 ==========
-    geometry_msgs::msg::Pose result;
-    result.position.x = prepare_position.x();
-    result.position.y = prepare_position.y();
-    result.position.z = prepare_position.z();
-    result.orientation.w = q_eef.w();
-    result.orientation.x = q_eef.x();
-    result.orientation.y = q_eef.y();
-    result.orientation.z = q_eef.z();
-
-    grasp_pose.position.x = grasp_position.x();
-    grasp_pose.position.y = grasp_position.y();
-    grasp_pose.position.z = grasp_position.z();
-    grasp_pose.orientation.w = q_eef.w();
-    grasp_pose.orientation.x = q_eef.x();
-    grasp_pose.orientation.y = q_eef.y();
-    grasp_pose.orientation.z = q_eef.z();
-
-    RCLCPP_INFO(node->get_logger(), "========== 计算结果汇总 ==========");
-    RCLCPP_INFO(node->get_logger(), "抓取位姿: POS(%f, %f, %f), ORI(%f, %f, %f, %f)",
-                grasp_pose.position.x, grasp_pose.position.y, grasp_pose.position.z,
-                grasp_pose.orientation.w, grasp_pose.orientation.x,
-                grasp_pose.orientation.y, grasp_pose.orientation.z);
-    RCLCPP_INFO(node->get_logger(), "准备位姿: POS(%f, %f, %f), ORI(%f, %f, %f, %f)",
-                result.position.x, result.position.y, result.position.z,
-                result.orientation.w, result.orientation.x,
-                result.orientation.y, result.orientation.z);
-
-    // 验证：两点是否沿法线方向对齐
-    Eigen::Vector3d diff = prepare_position - grasp_position;
-    RCLCPP_INFO(node->get_logger(), "准备位置-抓取位置向量: (%f, %f, %f)", 
-                diff.x(), diff.y(), diff.z());
-    
-    // 验证是否沿表面法线方向
-    double along_normal = diff.dot(surface_normal);
-    RCLCPP_INFO(node->get_logger(), "两点连线在法线方向投影: %f (应为0.1m)", along_normal);
-
-    // 最终验证：吸盘是否朝向远离机器人的方向
-    double robot_alignment = eef_x_axis.dot(away_from_robot);
-    RCLCPP_INFO(node->get_logger(), "最终验证-吸盘与远离机器人方向对齐度: %f (应为1.0)", robot_alignment);
-
-    return result;
+    return prepare_pose;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 // ========== 备选方案：根据物体实际朝向调整抓取方向 ==========
 geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos_with_orientation(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
-    geometry_msgs::msg::Pose &grasp_pose, 
-    ApproachMode mode)
+    geometry_msgs::msg::Pose &grasp_pose)
 {
     // 如果需要保持物体原来的某些朝向特征，可以使用这个版本
     Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
