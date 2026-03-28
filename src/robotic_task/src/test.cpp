@@ -156,6 +156,30 @@ private:
         client_->async_send_goal(goal_msg, send_goal_options);
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
     void goal_response_cb(std::shared_ptr<GoalHandleCatch> handle)
     {
         

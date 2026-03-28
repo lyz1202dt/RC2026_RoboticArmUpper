@@ -675,32 +675,28 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             
 
-               // 设置过渡位置
-            do{
-                move_group_interface->setStartStateToCurrentState();  
-                 
+               // 设置过渡位置（仅在规划成功时执行，避免执行到旧轨迹导致机械臂突跳）
+            bool reached_interim_pose = false;
+            do {
+                move_group_interface->setStartStateToCurrentState();
                 move_group_interface->setNamedTarget("kfs4_interim_2_pos");
 
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                // count = 0;
-                // while(success == false && count <=  MAX_COUNT_){
-                //     success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-                //     RCLCPP_WARN(node->get_logger(), "过渡位置规划失败，重行规划%d次", count+1);
-                //     count ++ ;
-                // }
-                if(success){
-                    RCLCPP_INFO(node->get_logger(), "规划到过渡位置成功");
-                } else {
-                    // finished_msg->reason = "机械臂无法到达过渡位置，路径规划失败";
-                    // // abort  → 终止当前目标，状态设为"失败",并返回finished_msg
-                    // current_goal_handle->abort(finished_msg);
-                    RCLCPP_WARN(node->get_logger(), "过渡位置规划失败，尝试直接规划到目标");
-                    // 如果过渡位置也失败，尝试直接规划（可能原来能走的路径被阻挡）
+                if (!success) {
+                    RCLCPP_WARN(node->get_logger(), "过渡位置规划失败，跳过过渡位姿，尝试直接规划到目标");
+                    break;
                 }
-            } while(move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
-            auto intermediate_pose = move_group_interface->getCurrentPose().pose;
-                    RCLCPP_INFO(node->get_logger(), "执行到过渡位置: Pos(%.3f,%.3f,%.3f)",
-                        intermediate_pose.position.x, intermediate_pose.position.y, intermediate_pose.position.z);
+
+                RCLCPP_INFO(node->get_logger(), "规划到过渡位置成功");
+                reached_interim_pose =
+                    (move_group_interface->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS);
+            } while (!reached_interim_pose);
+
+            if (reached_interim_pose) {
+                auto intermediate_pose = move_group_interface->getCurrentPose().pose;
+                RCLCPP_INFO(node->get_logger(), "执行到过渡位置: Pos(%.3f,%.3f,%.3f)",
+                    intermediate_pose.position.x, intermediate_pose.position.y, intermediate_pose.position.z);
+            }
             if(continue_flag)
                 continue;
 
