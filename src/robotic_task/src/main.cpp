@@ -1,9 +1,61 @@
 #include <rclcpp/rclcpp.hpp>
+#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <fstream>
+#include <sstream>
 #include "arm_handle_node.hpp"
+
+namespace {
+
+std::string LoadTextFile(const std::string& path) {
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        return "";
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+}
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
-    auto node=std::make_shared<rclcpp::Node>("arm_task_handle_node");
+    // 默认启用仿真时钟并将MoveIt状态输入绑定到ros2_control发布的机械臂关节状态，
+    // 避免 wall-time 与 sim-time 混用导致 current_state_monitor 判定状态过期。
+    rclcpp::NodeOptions node_options;
+    node_options.arguments({
+        "--ros-args",
+        "-p", "use_sim_time:=true",
+        "-r", "joint_states:=/joint_state_broadcaster/joint_states"
+    });
+    auto node=std::make_shared<rclcpp::Node>("arm_task_handle_node", node_options);
+
+    // 直接运行 robotic_task 时，MoveGroupInterface 需要本节点具备 robot_description 与 SRDF 参数。
+    node->declare_parameter<std::string>("robot_description", "");
+    node->declare_parameter<std::string>("robot_description_semantic", "");
+
+    std::string urdf_xml = node->get_parameter("robot_description").as_string();
+    if (urdf_xml.empty()) {
+        const std::string robotic_arm_share = ament_index_cpp::get_package_share_directory("robotic_arm");
+        urdf_xml = LoadTextFile(robotic_arm_share + "/urdf/robotic_arm_mujoco.urdf");
+        if (!urdf_xml.empty()) {
+            node->set_parameter(rclcpp::Parameter("robot_description", urdf_xml));
+        } else {
+            RCLCPP_WARN(node->get_logger(), "robot_description 为空且本地URDF加载失败，后续可能无法初始化 MoveGroupInterface");
+        }
+    }
+
+    std::string srdf_xml = node->get_parameter("robot_description_semantic").as_string();
+    if (srdf_xml.empty()) {
+        const std::string robotic_config_share = ament_index_cpp::get_package_share_directory("robotic_config");
+        srdf_xml = LoadTextFile(robotic_config_share + "/config/robotic_arm.srdf");
+        if (!srdf_xml.empty()) {
+            node->set_parameter(rclcpp::Parameter("robot_description_semantic", srdf_xml));
+        } else {
+            RCLCPP_WARN(node->get_logger(), "robot_description_semantic 为空且本地SRDF加载失败，后续可能无法初始化 MoveGroupInterface");
+        }
+    }
+
     auto arm_handle=std::make_shared<ArmHandleNode>(node);
     rclcpp::spin(node);
     rclcpp::shutdown();

@@ -26,6 +26,7 @@
 #include <string>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <vector>
+#include <robot_interfaces/msg/arm.hpp>
 #include <robot_interfaces/msg/moveit.hpp>
 
 
@@ -94,6 +95,17 @@ private:
     trajectory_msgs::msg::JointTrajectoryPoint output_state;
 
     std::vector<std::string> joint_names_;
+    bool mujoco_mode_{false};
+
+    rclcpp::Publisher<robot_interfaces::msg::Arm>::SharedPtr state_publisher_;
+    rclcpp::Subscription<robot_interfaces::msg::Arm>::SharedPtr target_subscriber_;
+    robot_interfaces::msg::Arm joints_state_;
+    robot_interfaces::msg::Arm joints_target_;
+    std::vector<double> joint_kp_;
+    std::vector<double> joint_kd_;
+    double joint_torque_filter_gate_{0.8};
+    double joint_omega_filter_gate_{0.8};
+    double command_effort_limit_{80.0};
 
     ContinuousTrajectory continue_trajectory; // 轨迹管理对象：负责存储轨迹、计算插值
 
@@ -149,6 +161,7 @@ private:
     bool was_realtime_mode_{false};  // 记录上一次 update() 里的模式，用于输出切换日志
     trajectory_msgs::msg::JointTrajectoryPoint realtime_target_;  // 实时目标点
     std::mutex realtime_target_mutex_;  // 保护实时目标点
+    std::atomic_bool target_received_{false};  // 是否收到过 myjoints_target
 
 };
 

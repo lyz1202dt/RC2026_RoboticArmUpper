@@ -22,7 +22,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
  
-add_executable(camera "src/vision_arm_client .cpp")
+add_executable(camera src/vision_arm_client.cpp)
 
 target_include_directories(camera PRIVATE ${OpenCV_INCLUDE_DIRS})
 
@@ -44,7 +44,7 @@ target_link_libraries(camera
   CURL::libcurl
 )
 
-install(TARGETS main
+install(TARGETS camera
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -12,6 +12,7 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 
 install(DIRECTORY urdf DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY model DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY meshes/ DESTINATION share/${PROJECT_NAME}/meshes)
 
 if(BUILD_TESTING)

@@ -23,6 +23,13 @@
 
 namespace mixcontroller {
 
+namespace {
+
+constexpr char kStateTopic[] = "myjoints_state";
+constexpr char kTargetTopic[] = "myjoints_target";
+
+}  // namespace
+
 // 一.五次多项式轨迹参数类实现
 void QuinticParam::set_param(
     const double t0, const double t1, const double p0, const double v0, const double a0, const double pt, const double v1, const double at
@@ -156,6 +163,35 @@ controller_interface::CallbackReturn MixController::on_init() {
 
     // get_node(), 获取ros2节点指针
     RCLCPP_INFO(this->get_node()->get_logger(), "混合控制器初始化");
+    joint_names_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
+
+    if (!this->get_node()->has_parameter("control_mode")) {
+        this->get_node()->declare_parameter<std::string>("control_mode", "moveit");
+    }
+    const std::string control_mode = this->get_node()->get_parameter("control_mode").as_string();
+    mujoco_mode_ = (control_mode == "mujoco");
+    RCLCPP_INFO(this->get_node()->get_logger(), "control_mode=%s, mujoco_mode=%d", control_mode.c_str(), mujoco_mode_ ? 1 : 0);
+    if (!this->get_node()->has_parameter("joint_torque_filter_gate")) {
+        this->get_node()->declare_parameter<double>("joint_torque_filter_gate", 0.8);
+    }
+    if (!this->get_node()->has_parameter("joint_omega_filter_gate")) {
+        this->get_node()->declare_parameter<double>("joint_omega_filter_gate", 0.8);
+    }
+    if (!this->get_node()->has_parameter("command_effort_limit")) {
+        this->get_node()->declare_parameter<double>("command_effort_limit", 80.0);
+    }
+    joint_kp_.resize(joint_names_.size(), 50.0);
+    joint_kd_.resize(joint_names_.size(), 3.0);
+    for (size_t i = 0; i < joint_names_.size(); ++i) {
+        const std::string kp_name = "joint" + std::to_string(i + 1) + "_kp";
+        const std::string kd_name = "joint" + std::to_string(i + 1) + "_kd";
+        if (!this->get_node()->has_parameter(kp_name)) {
+            this->get_node()->declare_parameter<double>(kp_name, 50.0);
+        }
+        if (!this->get_node()->has_parameter(kd_name)) {
+            this->get_node()->declare_parameter<double>(kd_name, 3.0);
+        }
+    }
 
     // 专用于参数查询的独立节点，避免在已托管控制器节点上触发 executor 冲突
     param_query_node_ = std::make_shared<rclcpp::Node>("robotic_arm_controller_param_client");
@@ -181,13 +217,14 @@ controller_interface::CallbackReturn MixController::on_init() {
             kdl_twist_command_.vel = KDL::Vector(twist_command_.linear.x, twist_command_.linear.y, twist_command_.linear.z);
             kdl_twist_command_.rot = KDL::Vector(twist_command_.angular.x, twist_command_.angular.y, twist_command_.angular.z);
             auto ik_solver_ = std::make_shared<KDL::ChainIkSolverVel_pinv>(chain); // 创建逆运动学求解器
-            if (state_interfaces_.size() < joint_names_.size() * 2) {
+            const size_t state_stride = mujoco_mode_ ? 3 : 2;
+            if (state_interfaces_.size() < joint_names_.size() * state_stride) {
                 return;
             }
 
             KDL::JntArray q_current(joint_names_.size()); // 当前关节位置
             for (size_t i = 0; i < joint_names_.size(); ++i) {
-                q_current(i) = state_interfaces_[i * 2 + 0].get_value(); // 从状态接口获取当前关节位置
+                q_current(i) = state_interfaces_[i * state_stride + 0].get_value(); // 从状态接口获取当前关节位置
             }
 
             if (q_dot_.rows() != static_cast<unsigned int>(joint_names_.size())) {
@@ -274,6 +311,18 @@ controller_interface::CallbackReturn MixController::on_init() {
             is_realtime_stream_.store(UseMoveit.load(std::memory_order_relaxed));
         }
     );
+
+    // 无论初始 mode 如何，始终建立 Mujoco 话题链路，避免参数加载时序导致未订阅目标命令。
+    auto reliable_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    state_publisher_ = this->get_node()->create_publisher<robot_interfaces::msg::Arm>(kStateTopic, reliable_qos);
+    target_subscriber_ = this->get_node()->create_subscription<robot_interfaces::msg::Arm>(
+        kTargetTopic,
+        reliable_qos,
+        [this](const robot_interfaces::msg::Arm::SharedPtr msg) {
+            joints_target_ = *msg;
+            target_received_.store(true, std::memory_order_relaxed);
+        }
+    );
     // 实时消息
     result_msg   = std::make_shared<control_msgs::action::FollowJointTrajectory::Result>();
     feedback_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Feedback>();
@@ -305,6 +354,21 @@ controller_interface::CallbackReturn MixController::on_init() {
 
 controller_interface::CallbackReturn MixController::on_configure(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
+    const std::string control_mode = this->get_node()->get_parameter("control_mode").as_string();
+    mujoco_mode_ = (control_mode == "mujoco");
+    RCLCPP_INFO(this->get_node()->get_logger(), "on_configure control_mode=%s, mujoco_mode=%d", control_mode.c_str(), mujoco_mode_ ? 1 : 0);
+
+    if (mujoco_mode_) {
+        joint_torque_filter_gate_ = this->get_node()->get_parameter("joint_torque_filter_gate").as_double();
+        joint_omega_filter_gate_ = this->get_node()->get_parameter("joint_omega_filter_gate").as_double();
+        command_effort_limit_ = std::max(this->get_node()->get_parameter("command_effort_limit").as_double(), 0.0);
+        for (size_t i = 0; i < joint_names_.size(); ++i) {
+            joint_kp_[i] = this->get_node()->get_parameter("joint" + std::to_string(i + 1) + "_kp").as_double();
+            joint_kd_[i] = this->get_node()->get_parameter("joint" + std::to_string(i + 1) + "_kd").as_double();
+        }
+        return controller_interface::CallbackReturn::SUCCESS;
+    }
+
     // TODO:加载并解析URDF
     RCLCPP_INFO(get_node()->get_logger(), "尝试解析URDF");
 
@@ -415,6 +479,116 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
 
 
     (void)period;
+
+    if (mujoco_mode_) {
+        const size_t dof = joint_names_.size();
+        if (command_interfaces_.size() < dof) {
+            RCLCPP_ERROR_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                2000,
+                "Mujoco command interface数量不足: expected >= %zu, actual=%zu",
+                dof,
+                command_interfaces_.size());
+            return controller_interface::return_type::ERROR;
+        }
+        const bool has_effort_state = state_interfaces_.size() >= dof * 3;
+        const bool has_pos_vel_state = state_interfaces_.size() >= dof * 2;
+        if (!has_pos_vel_state) {
+            RCLCPP_ERROR_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                2000,
+                "Mujoco state interface数量不足: expected >= %zu(position+velocity), actual=%zu",
+                dof * 2,
+                state_interfaces_.size());
+            return controller_interface::return_type::ERROR;
+        }
+
+        for (size_t i = 0; i < dof; ++i) {
+            const size_t base = has_effort_state ? i * 3 : i * 2;
+            joints_state_.joints[i].rad = static_cast<float>(state_interfaces_[base + 0].get_value());
+            joints_state_.joints[i].omega = static_cast<float>(
+                joint_omega_filter_gate_ * joints_state_.joints[i].omega +
+                (1.0 - joint_omega_filter_gate_) * state_interfaces_[base + 1].get_value());
+
+            const double measured_effort = has_effort_state ? state_interfaces_[base + 2].get_value() : 0.0;
+            joints_state_.joints[i].torque = static_cast<float>(
+                joint_torque_filter_gate_ * joints_state_.joints[i].torque +
+                (1.0 - joint_torque_filter_gate_) * measured_effort);
+        }
+
+        if (state_publisher_) {
+            state_publisher_->publish(joints_state_);
+        }
+
+        const bool trajectory_active =
+            is_execut_trajectory || (activate_goal_handle_ && activate_goal_handle_->is_active());
+
+        // MuJoCo模式下优先执行FollowJointTrajectory，避免被myjoints_target缺失逻辑覆盖。
+        if (trajectory_active) {
+            const bool has_point = continue_trajectory.get_target(time, output_state);
+            if (has_point) {
+                for (size_t i = 0; i < dof; ++i) {
+                    const double pos = (i < output_state.positions.size()) ? output_state.positions[i] : joints_state_.joints[i].rad;
+                    const double vel = (i < output_state.velocities.size()) ? output_state.velocities[i] : 0.0;
+                    joints_target_.joints[i].rad = static_cast<float>(pos);
+                    joints_target_.joints[i].omega = static_cast<float>(vel);
+                    joints_target_.joints[i].torque = 0.0f;
+                }
+            }
+
+            auto goal_handle = activate_goal_handle_;
+            if (goal_handle && goal_handle->is_active()) {
+                feedback_msg->joint_names = joint_names_;
+                feedback_msg->desired = output_state;
+                feedback_msg->actual.positions.resize(dof);
+                feedback_msg->actual.velocities.resize(dof);
+                for (size_t i = 0; i < dof; ++i) {
+                    feedback_msg->actual.positions[i] = joints_state_.joints[i].rad;
+                    feedback_msg->actual.velocities[i] = joints_state_.joints[i].omega;
+                }
+                feedback_msg->header.stamp = get_node()->now();
+                try {
+                    goal_handle->publish_feedback(feedback_msg);
+                } catch (const std::exception& e) {
+                    RCLCPP_WARN(this->get_node()->get_logger(), "publish_feedback failed: %s", e.what());
+                }
+            }
+
+            if (!has_point) {
+                is_execut_trajectory = false;
+                result_msg->error_code = control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL;
+                result_msg->error_string = "Trajectory finished";
+                auto done_handle = activate_goal_handle_;
+                activate_goal_handle_.reset();
+                if (done_handle && done_handle->is_active()) {
+                    try {
+                        done_handle->succeed(result_msg);
+                    } catch (const std::exception& e) {
+                        RCLCPP_WARN(this->get_node()->get_logger(), "succeed failed: %s", e.what());
+                    }
+                }
+            }
+        } else if (!target_received_.load(std::memory_order_relaxed)) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                2000,
+                "尚未收到 myjoints_target，当前按零目标输出（可忽略，收到目标后自动恢复）");
+        }
+
+        for (size_t i = 0; i < dof; ++i) {
+            double effort = joint_kp_[i] * (static_cast<double>(joints_target_.joints[i].rad) - static_cast<double>(joints_state_.joints[i].rad)) +
+                            joint_kd_[i] * (static_cast<double>(joints_target_.joints[i].omega) - static_cast<double>(joints_state_.joints[i].omega)) +
+                            static_cast<double>(joints_target_.joints[i].torque);
+            effort = std::clamp(effort, -command_effort_limit_, command_effort_limit_);
+            command_interfaces_[i].set_value(effort);
+        }
+
+        return controller_interface::return_type::OK;
+    }
+
     const size_t controlled_dof = std::min(joint_names_.size(), kdl_dof_);
     if (controlled_dof == 0) {
         return controller_interface::return_type::ERROR;
@@ -580,6 +754,13 @@ controller_interface::InterfaceConfiguration MixController::command_interface_co
     controller_interface::InterfaceConfiguration cfg; // 创建配置对象
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL; // 逐个声明
 
+    if (mujoco_mode_) {
+        for (const auto& name : joint_names_) {
+            cfg.names.push_back(name + "/effort");
+        }
+        return cfg;
+    }
+
     // 在update中，把命令写入接口
     for (const auto& name : joint_names_) {
         cfg.names.push_back(name + "/position"); // 位置接口
@@ -593,6 +774,15 @@ controller_interface::InterfaceConfiguration MixController::command_interface_co
 controller_interface::InterfaceConfiguration MixController::state_interface_configuration() const {
     controller_interface::InterfaceConfiguration cfg;
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
+
+    if (mujoco_mode_) {
+        for (const auto& name : joint_names_) {
+            cfg.names.push_back(name + "/position");
+            cfg.names.push_back(name + "/velocity");
+            cfg.names.push_back(name + "/effort");
+        }
+        return cfg;
+    }
 
     for (const auto& name : joint_names_) {
         cfg.names.push_back(name + "/position"); // 读取实际位置
