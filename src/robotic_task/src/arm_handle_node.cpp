@@ -16,6 +16,7 @@
 #include <moveit_msgs/msg/detail/constraints__struct.hpp>
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 // #include <qt5/QtGui/qvalidator.h>
+#include <mutex>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter.hpp>
 #include <rclcpp/parameter_client.hpp>
@@ -1614,22 +1615,21 @@ void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::Shared
         return;
     }
 
-    geometry_msgs::msg::Pose pose_in_camera;
-    bool candidate_valid = false;
-
-    // 第一段短锁：读取/更新共享缓存（不做耗时TF）
-    {
+    // 约定：x == 10008342.00 表示视觉消息无效，回退为最近一次可用目标
+    if (msg->pose.position.x == 10008342.00) {
         std::lock_guard<std::mutex> lock(vision_target_mutex_);
-
-        pose_in_camera = msg->pose;
-        available_target_pose_ = pose_in_camera;
-        candidate_valid = true;
-    }
-
-    if (!candidate_valid) {
-        RCLCPP_WARN(node->get_logger(), "警告：视觉消息状态无效");
+        detected_target_pose_on_base_link_ = available_target_pose_;
+        has_vision_target_ = true;
+        RCLCPP_WARN_THROTTLE(
+            node->get_logger(),
+            *node->get_clock(),
+            2000,
+            "警告：视觉消息无效（x=10008342.00），回退到可用目标"
+        );
         return;
     }
+
+    geometry_msgs::msg::Pose pose_in_camera = msg->pose;
 
     // 锁外做TF，避免阻塞读线程
     geometry_msgs::msg::Pose transformed_pose;
@@ -1674,9 +1674,10 @@ void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::Shared
         std::lock_guard<std::mutex> lock(vision_target_mutex_);
         detected_target_pose_ = pose_in_camera;
         detected_target_pose_on_base_link_ = transformed_pose;
+        available_target_pose_ = transformed_pose;
         has_vision_target_ = true;
     }
-
+    
     RCLCPP_INFO_THROTTLE(
         node->get_logger(),
         *node->get_clock(),

@@ -188,11 +188,22 @@ private:
     // 
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr vision_subscription_;
     std::mutex vision_target_mutex_;
+
+    // 视觉系统目标
     bool has_vision_target_{false};
+
+
+
+    
 
     geometry_msgs::msg::Pose detected_target_pose_; // 从视觉系统获取的目标位姿
     geometry_msgs::msg::Pose detected_target_pose_on_base_link_; // 转换到base_link坐标系下的目标位姿
-    geometry_msgs::msg::Pose available_target_pose_;
+    geometry_msgs::msg::Pose available_target_pose_; // 可用的目标位姿
+
+
+
+
+
     bool has_last_prepare_orientation_{false};
     Eigen::Quaterniond last_prepare_orientation_{Eigen::Quaterniond::Identity()};
     double prepare_orientation_max_step_rad_{0.2617993877991494}; // 15 deg
