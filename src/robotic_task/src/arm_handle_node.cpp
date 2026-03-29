@@ -359,6 +359,23 @@ void ArmHandleNode::arm_catch_task_handle() {
     } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
 
 
+    geometry_msgs::msg::Pose experimental_pose_ ;
+    experimental_pose_.position.x = 0.560;
+    experimental_pose_.position.y = -0.000;
+    experimental_pose_.position.z = 0.500;   
+    experimental_pose_.orientation.w = 0.6561;
+    experimental_pose_.orientation.x = 0.0;
+    experimental_pose_.orientation.y = -0.7547;
+    experimental_pose_.orientation.z = 0.0;
+    move_group_interface->setPoseTarget(experimental_pose_);
+    bool success_ex = move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS;
+    if (success_ex)
+    {
+        RCLCPP_INFO(node->get_logger(), "实验位置可达");
+    } else {
+        RCLCPP_INFO(node->get_logger(), "实验位置不可达");
+    }
+
 
 
 
@@ -848,30 +865,86 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
+            move_group_interface->setStartStateToCurrentState();
 
+            // 在等待稳定前，强制刷新 MoveIt 的起始状态，确保内部模型与物理实际位置一致
+            // 【保险措施 1】：双重刷新机制，消除内部状态缓存偏差
+            move_group_interface->setStartStateToCurrentState();
+            std::this_thread::sleep_for(50ms); 
+            move_group_interface->setStartStateToCurrentState(); // 二次刷新，确保收敛
+            
+            std::this_thread::sleep_for(50ms); // 短暂休眠，让底层控制器消化完上一条轨迹的残余指令
 
+            // 等待机械臂完全静止后再启动视觉伺服，避免控制模式切换导致的突跳
+            RCLCPP_INFO(node->get_logger(), "[视觉伺服] 等待机械臂稳定后启动视觉伺服...");
+            bool arm_stable = false;
+            int stability_count = 0;
+            const int STABILITY_THRESHOLD = 8;  // 增加连续稳定帧数要求，从 5 改为 8，确保更充分的静止
+            const double POSITION_STABILITY_THRESHOLD = 0.002;  // 略微放宽位置变化阈值 (m)，避免对微小噪声敏感
+            const double ORIENTATION_STABILITY_THRESHOLD = 0.005; // 新增：姿态稳定阈值 (rad)
 
+            geometry_msgs::msg::PoseStamped last_stable_pose = move_group_interface->getCurrentPose();
+            
+            rclcpp::Rate stability_check_rate(100.0);  // 100Hz 检查稳定性
+            // 增加最大迭代次数，给予机械臂更多时间停止（原 100 次=1 秒，现 200 次=2 秒）
+            for (int stability_iter = 0; stability_iter < 200 && !arm_stable; ++stability_iter) {
+                auto current_pose = move_group_interface->getCurrentPose();
+                
+                // 计算位置变化
+                double position_change = std::sqrt(
+                    std::pow(current_pose.pose.position.x - last_stable_pose.pose.position.x, 2) +
+                    std::pow(current_pose.pose.position.y - last_stable_pose.pose.position.y, 2) +
+                    std::pow(current_pose.pose.position.z - last_stable_pose.pose.position.z, 2)
+                );
 
+                // 计算姿态变化 (简化为四元数距离)
+                tf2::Quaternion q_last(last_stable_pose.pose.orientation.x, last_stable_pose.pose.orientation.y, last_stable_pose.pose.orientation.z, last_stable_pose.pose.orientation.w);
+                tf2::Quaternion q_curr(current_pose.pose.orientation.x, current_pose.pose.orientation.y, current_pose.pose.orientation.z, current_pose.pose.orientation.w);
+                double orientation_change = std::abs(q_last.angleShortestPath(q_curr));
+                
+                if (position_change < POSITION_STABILITY_THRESHOLD && orientation_change < ORIENTATION_STABILITY_THRESHOLD) {
+                    stability_count++;
+                } else {
+                    stability_count = 0; // 一旦不稳定，重新计数
+                }
+                
+                if (stability_count >= STABILITY_THRESHOLD) {
+                    arm_stable = true;
+                    RCLCPP_INFO(node->get_logger(), "[视觉伺服] 机械臂已稳定 (连续%d帧)，启动视觉伺服", stability_count);
+                } else if (stability_iter % 20 == 0) {
+                    RCLCPP_INFO(node->get_logger(), "[视觉伺服] 等待中... 稳定帧数：%d/%d, 位置误差:%.4f, 姿态误差:%.4f", 
+                        stability_count, STABILITY_THRESHOLD, position_change, orientation_change);
+                }
+                
+                last_stable_pose = current_pose;
+                stability_check_rate.sleep();
+            }
+            
+            if (!arm_stable) {
+                RCLCPP_WARN(node->get_logger(), "[视觉伺服] 等待超时 (2s)，仍然启动视觉伺服 (可能存在颤抖，请检查机械臂增益)");
+            }
 
+            // 确认稳定后，再次刷新起始状态，防止等待期间产生的微小漂移影响后续控制
+            // 【保险措施 2】：最终状态锁定
+            move_group_interface->setStartStateToCurrentState();
+            std::this_thread::sleep_for(20ms);
 
-
-
-
-
-
-
-
-
-
-
-
-
+            // 【保险措施 3】：在切换控制模式前，强制限制最大速度和加速度，防止突发指令
+            move_group_interface->setMaxVelocityScalingFactor(0.1);   // 临时降低速度上限
+            move_group_interface->setMaxAccelerationScalingFactor(0.05); // 临时降低加速度上限
 
             robot_interfaces::msg::Moveit moveit_msg;
             moveit_msg.use_moveit = true;
             moveit_pub_->publish(moveit_msg);
+            
+            // 短暂等待消息传递和控制器模式切换生效
+            std::this_thread::sleep_for(50ms); 
+            
             // 以 100Hz 刷新当前位姿和目标位姿，避免无限循环阻塞任务线程。
             rclcpp::Rate loop_rate(100.0); // 100Hz
+
+            // 获取进入循环前的最新位姿，避免使用旧变量
+            current_pose = move_group_interface->getCurrentPose();
 
             auto calculate_distance_to_target = [&grasp_pose](const geometry_msgs::msg::PoseStamped& pose) {
                 const Eigen::Vector3d current_position(
@@ -889,17 +962,12 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             double distance_ = calculate_distance_to_target(current_pose);
 
-
-
-            const int MAX_jjjjjj = 10;
-            int jjjjjj = 0;
-
+            // 【保险措施 4】：定义最小有效移动距离，避免噪声引起的微动
+            const double MIN_EFFECTIVE_DISTANCE = 0.0005; // 0.5mm
 
             while (rclcpp::ok() && distance_ > SWITCH_DISTANCE_THRESHOLD ) { // 当末端与目标的距离大于阈值时持续进行视觉伺服调整
-                
-                jjjjjj++;
 
-                RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000, "视觉伺服调整中,距离目标: %.3f", distance_);
+                RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "视觉伺服调整中，距离目标：%.3f", distance_);
                 
                 if (cancle_current_task) {
                     RCLCPP_WARN(node->get_logger(), "视觉伺服被取消");
@@ -910,8 +978,6 @@ void ArmHandleNode::arm_catch_task_handle() {
                 if (fetch_latest_target_pose(latest_target_pose)) {
                     target_pose_on_base_link = latest_target_pose;
                 }
-
-
 
                 auto current_pose_now = move_group_interface->getCurrentPose();
                 calculate_prepare_pos(target_pose_on_base_link, 0.05, grasp_pose); // 10Hz 更新目标位置
@@ -933,9 +999,20 @@ void ArmHandleNode::arm_catch_task_handle() {
                     final_desired_position.pose.position.z
                 };
 
+                // 【保险措施 5】：在计算单点轨迹前，检查位移量是否过小，若是则跳过本次控制输出
+                double step_distance = (final_desired_position_eigen - current_pose_eigen).norm();
+                if (step_distance < MIN_EFFECTIVE_DISTANCE) {
+                    RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000, "目标位移过小 (%.4f m)，跳过本次控制以防抖动", step_distance);
+                    loop_rate.sleep();
+                    current_pose = current_pose_now; // 更新当前位姿用于下次判断
+                    distance_ = calculate_distance_to_target(current_pose);
+                    continue;
+                }
+
                 const std::vector<double> current_joint_values = move_group_interface->getCurrentJointValues();
                 visual_servoing_handler_.updateExternalJointSeed(current_joint_values);
 
+                // 执行视觉伺服解算，生成控制指令
                 visual_servoing_handler_.TotalPackaing(current_pose_eigen, final_desired_position_eigen, current_pose_now, final_desired_position);
                 
 
@@ -943,7 +1020,7 @@ void ArmHandleNode::arm_catch_task_handle() {
 
                 distance_ = calculate_distance_to_target(current_pose);
 
-                RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000, "当前末端位置: (%.3f, %.3f, %.3f), 目标位置: (%.3f, %.3f, %.3f), 距离: %.3f",
+                RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "当前末端位置：(%.3f, %.3f, %.3f), 目标位置：(%.3f, %.3f, %.3f), 距离：%.3f",
                     current_pose.pose.position.x, current_pose.pose.position.y, current_pose.pose.position.z,
                     grasp_pose.position.x, grasp_pose.position.y, grasp_pose.position.z,
                     distance_); 
@@ -951,8 +1028,33 @@ void ArmHandleNode::arm_catch_task_handle() {
                 loop_rate.sleep();
             }
             
+            // 【保险措施 6】：退出视觉伺服前，恢复正常的速度/加速度限制，并通知 MoveIt 接管
+            move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
+            move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
+            
             moveit_msg.use_moveit = false;
             moveit_pub_->publish(moveit_msg);
+            std::this_thread::sleep_for(50ms); // 等待模式切换完成
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

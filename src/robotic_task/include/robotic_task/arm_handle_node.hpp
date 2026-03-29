@@ -162,7 +162,7 @@ private:
     // 关节空间 
     //  */
     // 规划参数配置
-    const double SWITCH_DISTANCE_THRESHOLD = 0.02;  // 切换距离阈值（米）
+    const double SWITCH_DISTANCE_THRESHOLD = 0.025;  // 切换距离阈值（米）
     const double CARTESIAN_GOAL_TOLERANCE = 0.001;   // 笛卡尔空间目标容差
     const double JOINT_GOAL_TOLERANCE = 0.005;       // 关节空间目标容差`
     const double VELOCITY_SCALING = 0.4;             // 速度缩放因子

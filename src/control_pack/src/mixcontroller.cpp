@@ -2,6 +2,7 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <rclcpp/logging.hpp>
@@ -219,18 +220,48 @@ controller_interface::CallbackReturn MixController::on_init() {
                 return;
             }
 
+            const auto& point = msg->points[0];
+            const size_t expected_dof = joint_names_.size();
+            const auto all_finite = [](const std::vector<double>& values, size_t required_count) {
+                if (values.size() < required_count) {
+                    return false;
+                }
+                for (size_t i = 0; i < required_count; ++i) {
+                    if (!std::isfinite(values[i])) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            const bool valid_target =
+                all_finite(point.positions, expected_dof) &&
+                all_finite(point.velocities, expected_dof) &&
+                all_finite(point.accelerations, expected_dof);
+
+            if (!valid_target) {
+                RCLCPP_WARN(
+                    this->get_node()->get_logger(),
+                    "实时轨迹首点无效，忽略本次更新: pos=%zu vel=%zu acc=%zu expected=%zu",
+                    point.positions.size(),
+                    point.velocities.size(),
+                    point.accelerations.size(),
+                    expected_dof
+                );
+                return;
+            }
+
             // 存储实时目标点
             {
                 std::lock_guard<std::mutex> lock(realtime_target_mutex_);
-                realtime_target_ = msg->points[0];
+                realtime_target_ = point;
                 
                 // 验证接收到的数据
                 RCLCPP_INFO(
                     this->get_node()->get_logger(),
                     "[接收数据验证] positions.size=%zu, velocities.size=%zu, accelerations.size=%zu",
-                    msg->points[0].positions.size(),
-                    msg->points[0].velocities.size(),
-                    msg->points[0].accelerations.size()
+                    point.positions.size(),
+                    point.velocities.size(),
+                    point.accelerations.size()
                 );
                 
                 // 打印前3个位置和速度数据
@@ -238,15 +269,17 @@ controller_interface::CallbackReturn MixController::on_init() {
                     RCLCPP_INFO(
                         this->get_node()->get_logger(),
                         "[接收数据示例] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
-                        msg->points[0].positions[0],
-                        msg->points[0].positions.size() > 1 ? msg->points[0].positions[1] : 0.0,
-                        msg->points[0].positions.size() > 2 ? msg->points[0].positions[2] : 0.0,
-                        msg->points[0].velocities.size() > 0 ? msg->points[0].velocities[0] : 0.0,
-                        msg->points[0].velocities.size() > 1 ? msg->points[0].velocities[1] : 0.0,
-                        msg->points[0].velocities.size() > 2 ? msg->points[0].velocities[2] : 0.0
+                        point.positions[0],
+                        point.positions.size() > 1 ? point.positions[1] : 0.0,
+                        point.positions.size() > 2 ? point.positions[2] : 0.0,
+                        point.velocities.size() > 0 ? point.velocities[0] : 0.0,
+                        point.velocities.size() > 1 ? point.velocities[1] : 0.0,
+                        point.velocities.size() > 2 ? point.velocities[2] : 0.0
                     );
                 }
             }
+
+            realtime_target_ready_.store(true, std::memory_order_relaxed);
 
             // 设置实时流模式标志
             is_realtime_stream_.store(true, std::memory_order_relaxed);
@@ -263,7 +296,18 @@ controller_interface::CallbackReturn MixController::on_init() {
     moveit_subscriber_ = get_node()->create_subscription<robot_interfaces::msg::Moveit>(
         "moveit_command", 10,
         [this](const robot_interfaces::msg::Moveit::SharedPtr msg) {
+            const bool previous = UseMoveit.load(std::memory_order_relaxed);
             UseMoveit.store(msg->use_moveit, std::memory_order_relaxed);
+            const bool current = UseMoveit.load(std::memory_order_relaxed);
+
+            if (current && !previous) {
+                // 进入实时模式时先清空就绪标志，直到收到首条有效目标再开始跟踪。
+                realtime_target_ready_.store(false, std::memory_order_relaxed);
+            }
+            if (!current) {
+                realtime_target_ready_.store(false, std::memory_order_relaxed);
+            }
+
             RCLCPP_DEBUG_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
@@ -271,7 +315,7 @@ controller_interface::CallbackReturn MixController::on_init() {
                 "接受到使用moveit: use_moveit=%d",
                 UseMoveit.load(std::memory_order_relaxed)
             );
-            is_realtime_stream_.store(UseMoveit.load(std::memory_order_relaxed));
+            is_realtime_stream_.store(current);
         }
     );
     // 实时消息
@@ -434,6 +478,23 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
 
     if (is_realtime) {
         RCLCPP_INFO(this->get_node()->get_logger(), "正在使用实时流模式");
+
+        if (!realtime_target_ready_.load(std::memory_order_relaxed)) {
+            // 尚未收到实时流首帧时保持当前位置，避免模式切换瞬间写入默认零值导致突跳。
+            for (size_t i = 0; i < joint_names_.size(); ++i) {
+                const double hold_pos = state_interfaces_[i * 2 + 0].get_value();
+                command_interfaces_[i * 3 + 0].set_value(hold_pos);
+                command_interfaces_[i * 3 + 1].set_value(0.0);
+                command_interfaces_[i * 3 + 2].set_value(0.0);
+            }
+            RCLCPP_WARN_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                1000,
+                "实时模式已启用但首条目标未就绪，保持当前位置等待轨迹首帧"
+            );
+            return controller_interface::return_type::OK;
+        }
 
         // 实时流模式：直接使用接收到的目标点
         trajectory_msgs::msg::JointTrajectoryPoint target;

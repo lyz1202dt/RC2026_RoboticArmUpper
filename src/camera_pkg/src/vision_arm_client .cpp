@@ -1,7 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <opencv2/opencv.hpp>
-#include <librealsense2/rs.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include "robot_interfaces/action/catch.hpp"
 #include <robot_interfaces/action/detail/catch__struct.hpp>
@@ -98,23 +97,28 @@ public:
     /**
      * @brief 构造函数，初始化节点所有组件
      * 
-     * 初始化流程：
-     * 1. 创建话题发布者用于发布位姿信息
-     * 2. 配置并启动 RealSense 管道，同时采集彩色图和深度图
-     * 3. 设置相机内参矩阵和畸变系数（针对 Realsense D435 标定）
-     * 4. 定义物体坐标系下的 4 个角点位置（边长 350mm 正方形）
-     * 5. 启动 30ms 定时器触发视觉处理循环
+     * 初始化流程变更：
+     * 1. 创建话题发布者
+     * 2. 使用 OpenCV VideoCapture 打开 USB 相机 (默认设备 0)
+     * 3. 设置相机分辨率和内参
      */
     VisionArmNode() : Node("vision_arm_node")
     {
-        // 话题发布，订阅这个话题即可
         pub_ = this->create_publisher<PoseStamped>("robotic_task_", 10);
         client_ = rclcpp_action::create_client<Catch>(this, "robotic_task");
 
-        // RealSense 初始化
-        cfg_.enable_stream(RS2_STREAM_COLOR,1280,720,RS2_FORMAT_BGR8,30);
-        cfg_.enable_stream(RS2_STREAM_DEPTH,1280,720,RS2_FORMAT_Z16,30);
-        pipe_.start(cfg_);
+        // USB 相机初始化
+        cap_.open(0); // 打开默认相机 (设备索引 0)
+        if (!cap_.isOpened()) {
+            RCLCPP_ERROR(this->get_logger(), "无法打开 USB 相机！");
+            rclcpp::shutdown();
+            return;
+        }
+        
+        // 设置分辨率
+        cap_.set(CAP_PROP_FRAME_WIDTH, 1280);
+        cap_.set(CAP_PROP_FRAME_HEIGHT, 720);
+        cap_.set(CAP_PROP_FPS, 30);
 
         K_ = (Mat_<double>(3,3) << 956.65, 0, 683.6, 0, 961.97, 319.24, 0, 0, 1);
         D_ = Mat::zeros(1,5,CV_64F);
@@ -122,94 +126,40 @@ public:
         float s=175;
         objectPts_ = {{-s,-s,0},{s,-s,0},{s,s,0},{-s,s,0}};
         
-        // 30ms 定时器
         timer_ = this->create_wall_timer(
             std::chrono::milliseconds(30),
             std::bind(&VisionArmNode::vision_loop, this));
 
-        RCLCPP_INFO(this->get_logger(), "VisionArmNode 启动");
+        RCLCPP_INFO(this->get_logger(), "VisionArmNode (USB Camera) 启动");
     }
 
 private:
-    // ROS 2 发布器，用于发布物体位姿话题
     rclcpp::Publisher<PoseStamped>::SharedPtr pub_;
     rclcpp_action::Client<Catch>::SharedPtr client_;
-
-    // 定时器，控制视觉处理频率为 30Hz    
     rclcpp::TimerBase::SharedPtr timer_;
 
-    // RealSense 管道，负责帧数据流管理
-    rs2::pipeline pipe_;
+    // 替换为 OpenCV VideoCapture
+    cv::VideoCapture cap_;
 
-    // RealSense 配置对象，设置流参数
-    rs2::config cfg_;
-
-    // 相机内参矩阵 [fx,0,cx; 0,fy,cy; 0,0,1]
-    // 相机畸变系数 [k1,k2,p1,p2,k3]
     Mat K_, D_;
-
-
-    // 物体在自身坐标系下的 4 个角点坐标（单位：mm）
     std::vector<Point3f> objectPts_;
-
-    // 缓存上一次成功检测的位姿
     bool has_last_pose_ = false;    
     PoseStamped last_pose_;
 
-
-     /**
-     * @brief 视觉处理主循环函数
-     * 
-     * 该函数每 30ms 被定时器调用一次，执行完整的视觉处理流程：
-     * 
-     * 1. 帧获取阶段：
-     *    - 非阻塞方式查询新帧，避免程序等待
-     *    - 无新帧时使用缓存位姿继续发布，保证话题连续性
-     * 
-     * 2. 图像处理阶段：
-     *    - 转换到 HSV 颜色空间
-     *    - 双阈值分割提取红色区域（覆盖 0-10°和 170-180°色相）
-     *    - 形态学闭运算和开运算去除噪声
-     * 
-     * 3. 特征提取阶段：
-     *    - 提取最大面积轮廓作为目标物体
-     *    - 计算最小外接矩形获取四个顶点
-     *    - 按左上、右上、右下、左下顺序排序角点
-     *    - 亚像素级角点优化提高精度
-     * 
-     * 4. 位姿解算阶段：
-     *    - 使用 PnP 算法求解物体相对于相机的位姿
-     *    - 转换为欧拉角和四元数两种表示
-     *    - 坐标单位从 mm 转换到 m
-     * 
-     * 5. 结果输出阶段：
-     *    - 发布 PoseStamped 话题到 robotic_task_
-     *    - 更新缓存位姿
-     *    - 绘制坐标轴和位姿信息叠加层
-     * 
-     * 容错机制：
-     * - 轮廓点少于 10 个视为检测失败
-     * - 首次检测失败不发布消息
-     * - 后续检测失败则重复发布上次成功位姿
-     */
     void vision_loop()
     {
-        // 非阻塞取帧，没有新帧时用缓存位姿继续发布
-        rs2::frameset frames;
-        if (!pipe_.poll_for_frames(&frames))
-        {
-            if (has_last_pose_)
-            {
+        Mat frame;
+        // 从 USB 相机读取帧
+        if (!cap_.read(frame)) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "相机读取失败");
+            if (has_last_pose_) {
                 last_pose_.header.stamp = this->now();
                 pub_->publish(last_pose_);
             }
             return;
         }
-        rs2::video_frame color_frame = frames.get_color_frame();
-        if (!color_frame) return;
 
-        Mat frame(Size(color_frame.get_width(),color_frame.get_height()),CV_8UC3,
-                  (void*)color_frame.get_data(),Mat::AUTO_STEP);
+        if (frame.empty()) return;
 
         // ===== 视觉算法（原样保留）=====
         Mat hsv;
@@ -228,7 +178,9 @@ private:
         findContours(redMask,contours,RETR_EXTERNAL,CHAIN_APPROX_SIMPLE);
 
         double maxArea=0;
+
         std::vector<Point> best;
+        
         for(auto &c:contours){ double a=contourArea(c); if(a>maxArea){maxArea=a;best=c;} }
 
         if(best.size()>10)
@@ -272,12 +224,10 @@ private:
                 Vec3f euler=rotationMatrixToEuler(R);
                 Vec4f quat=rotationMatrixToQuaternion(R);
 
-                // pos 单位 mm -> m
                 double pos[3]={tvec.at<double>(0)/1000.0,
                                tvec.at<double>(1)/1000.0,
                                tvec.at<double>(2)/1000.0};
 
-                // ===== 发布话题 =====
                 PoseStamped msg;
                 msg.header.stamp    = this->now();
                 msg.header.frame_id = "camera_link";
@@ -290,7 +240,6 @@ private:
                 msg.pose.orientation.w = quat[3];
                 pub_->publish(msg);
 
-                // 缓存本次成功位姿
                 last_pose_ = msg;
                 has_last_pose_ = true;
 
@@ -319,26 +268,6 @@ private:
             }
         }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         auto goal_msg = Catch::Goal();
         goal_msg.action_type = 2; // 抓取动作
         auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
@@ -355,54 +284,6 @@ private:
 
         client_->async_send_goal(goal_msg, send_goal_options);
 
-        
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        // 检测失败时发布上一次成功的位姿
         if (!has_last_pose_ && best.size() <= 10)
         {
             // 首次就检测失败，无缓存，不发布
@@ -413,9 +294,6 @@ private:
             pub_->publish(last_pose_);
         }
 
-
-
-        // ===== 视觉显示（原样保留）=====
         imshow("Frame",frame);
         imshow("HSV",hsv);
         imshow("RedMask",redMask);
@@ -451,13 +329,6 @@ private:
         rclcpp::shutdown(); // 测试完成后关闭节点
     }
 };
-
-
-
-
-
-
-
 
 /**
  * @brief 程序入口函数

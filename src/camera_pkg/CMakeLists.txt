@@ -44,7 +44,7 @@ target_link_libraries(camera
   CURL::libcurl
 )
 
-install(TARGETS main
+install(TARGETS camera
   DESTINATION lib/${PROJECT_NAME}
 )
 

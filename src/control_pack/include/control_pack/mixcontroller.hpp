@@ -146,6 +146,7 @@ private:
 
     // 实时流模式支持
     std::atomic_bool is_realtime_stream_{false};  // 是否处于实时流模式
+    std::atomic_bool realtime_target_ready_{false};  // 是否已收到有效实时目标点
     bool was_realtime_mode_{false};  // 记录上一次 update() 里的模式，用于输出切换日志
     trajectory_msgs::msg::JointTrajectoryPoint realtime_target_;  // 实时目标点
     std::mutex realtime_target_mutex_;  // 保护实时目标点

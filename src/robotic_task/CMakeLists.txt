@@ -88,9 +88,9 @@ install(TARGETS
 robotic_task arm_test
 DESTINATION lib/${PROJECT_NAME})
 
-# install(
-#   DIRECTORY launch
-#   DESTINATION share/${PROJECT_NAME}
-# )
+install(
+  DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()
