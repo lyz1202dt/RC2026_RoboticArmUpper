@@ -13,6 +13,16 @@ def generate_launch_description():
 
     controller_config_dir = get_package_share_directory('robotic_config')
     controller_config = os.path.join(controller_config_dir, "config", "ros2_controllers.yaml")
+
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        parameters=[moveit_config.robot_description],
+        output="screen"
+    )
+
+
+
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
@@ -51,6 +61,7 @@ def generate_launch_description():
     return LaunchDescription([
         # ros2_control 主节点
         ros2_control_node,
+        robot_state_publisher,
 
         # 加载控制器
         joint_state_broadcaster_spawner,

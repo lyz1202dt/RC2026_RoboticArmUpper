@@ -142,9 +142,10 @@ private:
     cv::VideoCapture cap_;
 
     Mat K_, D_;
-    std::vector<Point3f> objectPts_;
+    std::vector<Point3f> objectPts_;     
     bool has_last_pose_ = false;    
     PoseStamped last_pose_;
+    bool goal_sent_ = false; // 新增：标记是否已发送目标，防止重复发送
 
     void vision_loop()
     {
@@ -154,6 +155,7 @@ private:
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "相机读取失败");
             if (has_last_pose_) {
                 last_pose_.header.stamp = this->now();
+                last_pose_.pose.position.x = 10008342.00;
                 pub_->publish(last_pose_);
             }
             return;
@@ -265,24 +267,28 @@ private:
                 putText(frame,buf,Point(textOrg.x,textOrg.y+25),FONT_HERSHEY_SIMPLEX,0.7,Scalar(0,255,0),2);
                 sprintf(buf,"Quat: %.3f %.3f %.3f %.3f",quat[0],quat[1],quat[2],quat[3]);
                 putText(frame,buf,Point(textOrg.x,textOrg.y+50),FONT_HERSHEY_SIMPLEX,0.7,Scalar(255,200,0),2);
+                
+                // 修改：仅在未发送过目标时发送，避免每帧重复发送
+                if (!goal_sent_) {
+                    auto goal_msg = Catch::Goal();
+                    goal_msg.action_type = 2; // 抓取动作
+                    auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
+
+                    send_goal_options.goal_response_callback =
+                        std::bind(&VisionArmNode::goal_response_cb, this, std::placeholders::_1);
+
+                    send_goal_options.feedback_callback =
+                        std::bind(&VisionArmNode::feedback_cb, this,
+                            std::placeholders::_1, std::placeholders::_2);
+
+                    send_goal_options.result_callback =
+                        std::bind(&VisionArmNode::result_cb, this, std::placeholders::_1);
+
+                    client_->async_send_goal(goal_msg, send_goal_options);
+                    goal_sent_ = true; // 标记已发送
+                }
             }
         }
-
-        auto goal_msg = Catch::Goal();
-        goal_msg.action_type = 2; // 抓取动作
-        auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
-
-        send_goal_options.goal_response_callback =
-            std::bind(&VisionArmNode::goal_response_cb, this, std::placeholders::_1);
-
-        send_goal_options.feedback_callback =
-            std::bind(&VisionArmNode::feedback_cb, this,
-                std::placeholders::_1, std::placeholders::_2);
-
-        send_goal_options.result_callback =
-            std::bind(&VisionArmNode::result_cb, this, std::placeholders::_1);
-
-        client_->async_send_goal(goal_msg, send_goal_options);
 
         if (!has_last_pose_ && best.size() <= 10)
         {
@@ -326,7 +332,11 @@ private:
         RCLCPP_INFO(this->get_logger(), "最终结果: %s", result.result->reason.c_str());
         RCLCPP_INFO(this->get_logger(), "最终 kfs_num = %d", result.result->kfs_num);
 
-        rclcpp::shutdown(); // 测试完成后关闭节点
+        goal_sent_ = false; // 重置标志位，允许下次检测再次发送
+        // 注意：原代码此处调用 rclcpp::shutdown()，这意味着程序运行一次就退出。
+        // 如果需要持续运行，应注释掉下一行；如果确实是单次测试，则保留。
+        // 此处保持原逻辑，但提醒用户注意。
+        rclcpp::shutdown(); 
     }
 };
 

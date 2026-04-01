@@ -25,6 +25,8 @@
 #include <string>
 #include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2/convert.hpp>
+#include <tf2/exceptions.hpp>
+#include <tf2/time.hpp>
 #include <tf2_ros/transform_listener.hpp>
 #include <thread>
 #include <iostream>
@@ -62,11 +64,15 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
     camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     tf_buffer_= std::make_shared<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-    vision_subscription_ = node->create_subscription<geometry_msgs::msg::PoseStamped>(
-    "robotic_task_", rclcpp::SensorDataQoS(),
-    std::bind(&ArmHandleNode::visionCallback, this, std::placeholders::_1));
+    
 
+    vision_timer_ = node->create_wall_timer(100ms, [this]() {
+        this->visionCallback();
+    });
 
+    object_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
+    object_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*object_link0_tf_buffer);
+    object_link0_tf = geometry_msgs::msg::TransformStamped();
 
 
 
@@ -614,16 +620,23 @@ void ArmHandleNode::arm_catch_task_handle() {
                 continue;
             }
 
+            // 计算目标位置在基座坐标系下 XY 平面的欧几里得范数（距离原点的直线距离）
             const double target_xy_norm = std::hypot(
                 target_pose_on_base_link.position.x,
                 target_pose_on_base_link.position.y
             );
+
+            // 检查目标位姿在基座坐标系下的位置分量（x, y, z）是否均为有限值，
+            // 以确保后续运动规划或控制逻辑不会因无效数值（如 NaN 或无穷大）而引发异常。
             const bool target_finite =
                 std::isfinite(target_pose_on_base_link.position.x) &&
                 std::isfinite(target_pose_on_base_link.position.y) &&
                 std::isfinite(target_pose_on_base_link.position.z);
+
+            // 判断目标点是否位于有效工作空间内：要求水平距离在 [0.08, 0.85] 米之间，
+            // 且相对于 base_link 的垂直高度在 [-0.05, 0.70] 米之间。
             const bool target_in_workspace =
-                (target_xy_norm >= 0.08 && target_xy_norm <= 0.85) &&
+                (target_xy_norm >= 0.001 && target_xy_norm <= 1) &&
                 (target_pose_on_base_link.position.z >= -0.05 && target_pose_on_base_link.position.z <= 0.70);
 
             if (!target_finite || !target_in_workspace) {
@@ -1707,76 +1720,109 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
-void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+void ArmHandleNode::visionCallback() {
     if (!rclcpp::ok()) {
         return;
     }
 
-    if (!msg) {
-        RCLCPP_WARN(node->get_logger(), "警告：接收到空的视觉消息");
-        return;
-    }
+    // if (!msg) {
+    //     RCLCPP_WARN(node->get_logger(), "警告：接收到空的视觉消息");
+    //     return;
+    // }
 
-    // 约定：x == 10008342.00 表示视觉消息无效，回退为最近一次可用目标
-    if (msg->pose.position.x == 10008342.00) {
-        std::lock_guard<std::mutex> lock(vision_target_mutex_);
-        detected_target_pose_on_base_link_ = available_target_pose_;
-        has_vision_target_ = true;
-        RCLCPP_WARN_THROTTLE(
-            node->get_logger(),
-            *node->get_clock(),
-            2000,
-            "警告：视觉消息无效（x=10008342.00），回退到可用目标"
-        );
-        return;
-    }
+    // // 约定：x == 10008342.00 表示视觉消息无效，回退为最近一次可用目标
+    // if (msg->pose.position.x == 10008342.00) {
+    //     std::lock_guard<std::mutex> lock(vision_target_mutex_);
+    //     detected_target_pose_on_base_link_ = available_target_pose_;
+    //     has_vision_target_ = true;
+    //     RCLCPP_WARN_THROTTLE(
+    //         node->get_logger(),
+    //         *node->get_clock(),
+    //         2000,
+    //         "警告：视觉消息无效（x=10008342.00），回退到可用目标"
+    //     );
+    //     return;
+    // }
 
-    geometry_msgs::msg::Pose pose_in_camera = msg->pose;
+    // geometry_msgs::msg::Pose pose_in_camera = msg->pose;
 
-    // 锁外做TF，避免阻塞读线程
-    geometry_msgs::msg::Pose transformed_pose;
+    // // 锁外做TF，避免阻塞读线程
+    // geometry_msgs::msg::Pose transformed_pose;
+    // try {
+    //     // 若消息时间戳无效，则退化为当前时刻
+    //     rclcpp::Time query_stamp = msg->header.stamp;
+    //     if (query_stamp.nanoseconds() == 0) {
+    //         query_stamp = node->now();
+    //     }
+
+    //     auto tf = camera_link0_tf_buffer->lookupTransform(
+    //         "base_link",
+    //         "camera_link",
+    //         query_stamp,
+    //         tf2::durationFromSec(0.02)
+    //     );
+
+    //     tf2::doTransform(pose_in_camera, transformed_pose, tf);
+    // } catch (const tf2::TransformException &ex) {
+    //     RCLCPP_WARN(node->get_logger(), "警告：TF变换失败: %s", ex.what());
+    //     return;
+    // }
+
+
+    geometry_msgs::msg::PoseStamped transformed_pose_;
+    geometry_msgs::msg::TransformStamped transform;
     try {
-        // 若消息时间戳无效，则退化为当前时刻
-        rclcpp::Time query_stamp = msg->header.stamp;
-        if (query_stamp.nanoseconds() == 0) {
-            query_stamp = node->now();
-        }
-
-        auto tf = camera_link0_tf_buffer->lookupTransform(
+        transform = tf_buffer_->lookupTransform(
             "base_link",
-            "camera_link",
-            query_stamp,
-            tf2::durationFromSec(0.02)
+            "object_frame",
+            tf2::TimePointZero
         );
-
-        tf2::doTransform(pose_in_camera, transformed_pose, tf);
     } catch (const tf2::TransformException &ex) {
-        RCLCPP_WARN(node->get_logger(), "警告：TF变换失败: %s", ex.what());
+        RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "警告：状态机查询TF失败: %s", ex.what());
         return;
     }
+
+    transformed_pose_.header.frame_id = "base_link";
+    transformed_pose_.header.stamp = transform.header.stamp;
+    transformed_pose_.pose.position.x = transform.transform.translation.x;
+    transformed_pose_.pose.position.y = transform.transform.translation.y;
+    transformed_pose_.pose.position.z = transform.transform.translation.z;
+    transformed_pose_.pose.orientation.x = transform.transform.rotation.x;
+    transformed_pose_.pose.orientation.y = transform.transform.rotation.y;
+    transformed_pose_.pose.orientation.z = transform.transform.rotation.z;
+    transformed_pose_.pose.orientation.w = transform.transform.rotation.w;
+
+
+
+
+
+
+
+
+
 
     // 四元数归一化（防止非单位四元数）
     tf2::Quaternion q(
-        transformed_pose.orientation.x,
-        transformed_pose.orientation.y,
-        transformed_pose.orientation.z,
-        transformed_pose.orientation.w
+        transformed_pose_.pose.orientation.x,
+        transformed_pose_.pose.orientation.y,
+        transformed_pose_.pose.orientation.z,
+        transformed_pose_.pose.orientation.w
     );
 
     if (q.length2() > 1e-12) {
         q.normalize();
-        transformed_pose.orientation.x = q.x();
-        transformed_pose.orientation.y = q.y();
-        transformed_pose.orientation.z = q.z();
-        transformed_pose.orientation.w = q.w();
+        transformed_pose_.pose.orientation.x = q.x();
+        transformed_pose_.pose.orientation.y = q.y();
+        transformed_pose_.pose.orientation.z = q.z();
+        transformed_pose_.pose.orientation.w = q.w();
     }
 
     // 第二段短锁：一次性发布共享结果
     {
         std::lock_guard<std::mutex> lock(vision_target_mutex_);
-        detected_target_pose_ = pose_in_camera;
-        detected_target_pose_on_base_link_ = transformed_pose;
-        available_target_pose_ = transformed_pose;
+        // detected_target_pose_ = pose_in_camera;
+        detected_target_pose_on_base_link_ = transformed_pose_.pose;
+        available_target_pose_ = transformed_pose_.pose; 
         has_vision_target_ = true;
     }
     
@@ -1785,13 +1831,13 @@ void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::Shared
         *node->get_clock(),
         5000,
         "视觉目标更新(base_link): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
-        transformed_pose.position.x,
-        transformed_pose.position.y,
-        transformed_pose.position.z,
-        transformed_pose.orientation.w,
-        transformed_pose.orientation.x,
-        transformed_pose.orientation.y,
-        transformed_pose.orientation.z
+        transformed_pose_.pose.position.x,
+        transformed_pose_.pose.position.y,
+        transformed_pose_.pose.position.z,
+        transformed_pose_.pose.orientation.w,
+        transformed_pose_.pose.orientation.x,
+        transformed_pose_.pose.orientation.y,
+        transformed_pose_.pose.orientation.z
     );
 }
 

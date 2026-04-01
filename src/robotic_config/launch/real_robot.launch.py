@@ -26,12 +26,12 @@ def generate_launch_description():
             }]
         )
     
-    #发布相机到关节1的静态坐标变换x+90,y+90,z+90
+
     static_tf = Node(
     package='tf2_ros',
     executable='static_transform_publisher',
     arguments=[
-        '0', '0', '0',
+        '0.01', '0.01', '0',
         '0', '0', '0',
         'link5', 'camera_link'
     ]

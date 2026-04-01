@@ -12,6 +12,8 @@
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/publisher.hpp>
+#include <rclcpp/time.hpp>
+#include <rclcpp/timer.hpp>
 #include <robot_interfaces/msg/detail/moveit__struct.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/buffer.h>
@@ -87,9 +89,18 @@ private:
     std::atomic<bool> cancle_current_task{false};
     std::atomic<int> current_task_type{0}; // 任务类型
     std::atomic<int> current_kfs_num{0}; // kfs的数量
+    
+
     std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer; // 坐标变换
     std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
     geometry_msgs::msg::TransformStamped camera_link0_tf;
+    std::unique_ptr<tf2_ros::Buffer> object_link0_tf_buffer;
+    std::shared_ptr<tf2_ros::TransformListener> object_link0_tf_listener;
+    geometry_msgs::msg::TransformStamped object_link0_tf;
+
+
+
+
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
 
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr mark_pub_;
@@ -170,8 +181,10 @@ private:
     // rclcpp::Node::SharedPtr node_;
     // moveit::planning_interface::MoveGroupInterface::SharedPtr move_group_interface; 
     // moveit::planning_interface::PlanningSceneInterface planning_scene_;
+
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_; // 坐标系变换
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_; // 接收和订阅坐标变换消息
+
     geometry_msgs::msg::Pose calculate_prepare_pos_with_orientation(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
@@ -184,9 +197,7 @@ private:
     std::shared_ptr<TrajectorySmoother> trajectory_smoother_;
     std::shared_ptr<SegmentedVelocityController> segmented_velocity_controller_;
 
-
-    // 
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr vision_subscription_;
+    // 互斥锁，用于保护视觉目标相关共享数据的线程安全访问 
     std::mutex vision_target_mutex_;
 
     // 视觉系统目标
@@ -209,9 +220,10 @@ private:
     double prepare_orientation_max_step_rad_{0.2617993877991494}; // 15 deg
 
     // TODO: 真正的相机返回判断条件
-    void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+    void visionCallback();
 
     rclcpp::Publisher<robot_interfaces::msg::Moveit>::SharedPtr moveit_pub_;
+    rclcpp::TimerBase::SharedPtr vision_timer_;
 
     // ArmHandleNodeVisualServoing  // 视觉伺服处理对象
     VisualServoingArmHandleNode visual_servoing_handler_;
