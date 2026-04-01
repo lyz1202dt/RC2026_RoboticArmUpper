@@ -12,12 +12,14 @@ import os
 def generate_launch_description():
     robotic_arm_share = get_package_share_directory("robotic_arm")
     robotic_config_share = get_package_share_directory("robotic_config")
+    camera_pkg_share = get_package_share_directory("camera_pkg")
     moveit_config = MoveItConfigsBuilder("robotic_arm", package_name="robotic_config").to_moveit_configs()
     arm_joint_states_topic = "/joint_state_broadcaster/joint_states"
 
     urdf_path = os.path.join(robotic_arm_share, "urdf", "robotic_arm_mujoco.urdf")
     controller_yaml = os.path.join(robotic_config_share, "config", "ros2_controllers_mujoco.yaml")
     rviz_path = os.path.join(robotic_config_share, "config", "moveit.rviz")
+    camera_sim_params = os.path.join(camera_pkg_share, "config", "vision_mujoco.yaml")
 
     with open(urdf_path, "r", encoding="utf-8") as inf:
         robot_desc = inf.read()
@@ -52,6 +54,24 @@ def generate_launch_description():
         "start_move_group",
         default_value="true",
         description="Whether to start move_group together with MuJoCo simulation",
+    )
+
+    start_robotic_task_arg = DeclareLaunchArgument(
+        "start_robotic_task",
+        default_value="true",
+        description="Whether to start robotic_task node",
+    )
+
+    start_camera_arg = DeclareLaunchArgument(
+        "start_camera",
+        default_value="true",
+        description="Whether to start camera node for visual target publishing",
+    )
+
+    start_camera_tf_arg = DeclareLaunchArgument(
+        "start_camera_tf",
+        default_value="true",
+        description="Whether to publish static TF from link5 to camera_link",
     )
 
     robot_state_pub = Node(
@@ -116,6 +136,24 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_arm_calc")),
     )
 
+
+    camera_node = Node(
+        package="camera_pkg",
+        executable="camera",
+        parameters=[camera_sim_params, {"use_sim_time": True}],
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("start_camera")),
+    )
+
+    camera_static_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=["0", "0", "0", "0", "0", "0", "link5", "camera_link"],
+        parameters=[{"use_sim_time": True}],
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("start_camera_tf")),
+    )
+
     rviz2 = Node(
         package="rviz2",
         executable="rviz2",
@@ -146,6 +184,19 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_move_group")),
     )
 
+    robotic_task = Node(
+        package="robotic_task",
+        executable="robotic_task",
+        output="screen",
+        parameters=[
+            {"robot_description": robot_desc},
+            moveit_config.robot_description_semantic,
+            {"use_sim_time": True},
+        ],
+        remappings=[("/joint_states", arm_joint_states_topic)],
+        condition=IfCondition(LaunchConfiguration("start_robotic_task")),
+    )
+
     load_controller = RegisterEventHandler(
         OnProcessStart(
             target_action=mujoco,
@@ -163,10 +214,16 @@ def generate_launch_description():
         show_gui_arg,
         start_arm_calc_arg,
         start_move_group_arg,
+        start_robotic_task_arg,
+        start_camera_arg,
+        start_camera_tf_arg,
         robot_state_pub,
         mujoco,
         load_controller,
+        camera_static_tf,
         move_group,
+        robotic_task,
+        camera_node,
         arm_calc,
         rviz2,
     ])

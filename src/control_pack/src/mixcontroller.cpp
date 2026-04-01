@@ -204,7 +204,7 @@ controller_interface::CallbackReturn MixController::on_init() {
             RCLCPP_DEBUG_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
-                2000,
+                3000,
                 "Received Twist command: linear=(%f, %f, %f), angular=(%f, %f, %f)",
                 msg->linear.x,
                 msg->linear.y,
@@ -241,8 +241,10 @@ controller_interface::CallbackReturn MixController::on_init() {
     initial_joint_trajectory_subscriber_ = this->get_node()->create_subscription<trajectory_msgs::msg::JointTrajectory>(
         "initial_joint_trajectory", 10,
         [this](const trajectory_msgs::msg::JointTrajectory::SharedPtr msg) {
-            RCLCPP_INFO(
+             RCLCPP_INFO_THROTTLE(
                 this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                3000,
                 "[接收到轨迹消息] header.stamp=(sec=%d, nsec=%u), joint_names.size=%zu, points.size=%zu",
                 static_cast<int>(msg->header.stamp.sec),
                 static_cast<unsigned int>(msg->header.stamp.nanosec),
@@ -262,18 +264,22 @@ controller_interface::CallbackReturn MixController::on_init() {
                 realtime_target_ = msg->points[0];
                 
                 // 验证接收到的数据
-                RCLCPP_INFO(
+                RCLCPP_INFO_THROTTLE(
                     this->get_node()->get_logger(),
+                    *this->get_node()->get_clock(),
+                    3000,
                     "[接收数据验证] positions.size=%zu, velocities.size=%zu, accelerations.size=%zu",
                     msg->points[0].positions.size(),
                     msg->points[0].velocities.size(),
                     msg->points[0].accelerations.size()
                 );
                 
-                // 打印前3个位置和速度数据
+                // 打印前 3 个位置和速度数据
                 if (!msg->points[0].positions.empty()) {
-                    RCLCPP_INFO(
+                    RCLCPP_INFO_THROTTLE(
                         this->get_node()->get_logger(),
+                        *this->get_node()->get_clock(),
+                        3000,
                         "[接收数据示例] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
                         msg->points[0].positions[0],
                         msg->points[0].positions.size() > 1 ? msg->points[0].positions[1] : 0.0,
@@ -287,7 +293,12 @@ controller_interface::CallbackReturn MixController::on_init() {
 
             // 设置实时流模式标志
             is_realtime_stream_.store(true, std::memory_order_relaxed);
-            RCLCPP_INFO(this->get_node()->get_logger(), "已设置实时流模式标志");
+            RCLCPP_INFO_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                3000,
+                "已设置实时流模式标志"
+            );
         }
     );
 
@@ -304,8 +315,8 @@ controller_interface::CallbackReturn MixController::on_init() {
             RCLCPP_DEBUG_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
-                2000,
-                "接受到使用moveit: use_moveit=%d",
+                3000,
+                "接受到使用 moveit: use_moveit=%d",
                 UseMoveit.load(std::memory_order_relaxed)
             );
             is_realtime_stream_.store(UseMoveit.load(std::memory_order_relaxed));
@@ -486,8 +497,8 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             RCLCPP_ERROR_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
-                2000,
-                "Mujoco command interface数量不足: expected >= %zu, actual=%zu",
+                3000,
+                "Mujoco command interface 数量不足：expected >= %zu, actual=%zu",
                 dof,
                 command_interfaces_.size());
             return controller_interface::return_type::ERROR;
@@ -498,8 +509,8 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             RCLCPP_ERROR_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
-                2000,
-                "Mujoco state interface数量不足: expected >= %zu(position+velocity), actual=%zu",
+                3000,
+                "Mujoco state interface 数量不足：expected >= %zu(position+velocity), actual=%zu",
                 dof * 2,
                 state_interfaces_.size());
             return controller_interface::return_type::ERROR;
@@ -522,11 +533,51 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             state_publisher_->publish(joints_state_);
         }
 
+        // 检查实时流模式（视觉伺服）
+        const bool is_realtime = is_realtime_stream_.load(std::memory_order_relaxed);
+        
         const bool trajectory_active =
             is_execut_trajectory || (activate_goal_handle_ && activate_goal_handle_->is_active());
 
         // MuJoCo模式下优先执行FollowJointTrajectory，避免被myjoints_target缺失逻辑覆盖。
-        if (trajectory_active) {
+        // 如果在实时流模式（视觉伺服），则使用实时目标点
+        if (is_realtime) {
+            // 实时流模式：直接使用接收到的视觉伺服目标点
+            trajectory_msgs::msg::JointTrajectoryPoint target;
+            {
+                std::lock_guard<std::mutex> lock(realtime_target_mutex_);
+                target = realtime_target_;
+            }
+
+            // 验证数据完整性
+            if (target.positions.size() >= dof && target.velocities.size() >= dof) {
+                for (size_t i = 0; i < dof; ++i) {
+                    joints_target_.joints[i].rad = static_cast<float>(target.positions[i]);
+                    joints_target_.joints[i].omega = static_cast<float>(target.velocities[i]);
+                    joints_target_.joints[i].torque = 0.0f;
+                }
+                RCLCPP_INFO_THROTTLE(
+                    this->get_node()->get_logger(),
+                    *this->get_node()->get_clock(),
+                    3000,
+                    "[实时流执行] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
+                    target.positions[0],
+                    target.positions.size() > 1 ? target.positions[1] : 0.0,
+                    target.positions.size() > 2 ? target.positions[2] : 0.0,
+                    target.velocities[0],
+                    target.velocities.size() > 1 ? target.velocities[1] : 0.0,
+                    target.velocities.size() > 2 ? target.velocities[2] : 0.0
+                );
+            } else {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_node()->get_logger(),
+                    *this->get_node()->get_clock(),
+                    3000,
+                    "[实时流警告] 目标点数据不完整: pos.size=%zu, vel.size=%zu, expected=%zu",
+                    target.positions.size(), target.velocities.size(), dof
+                );
+            }
+        } else if (trajectory_active) {
             const bool has_point = continue_trajectory.get_target(time, output_state);
             if (has_point) {
                 for (size_t i = 0; i < dof; ++i) {
@@ -574,7 +625,7 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             RCLCPP_WARN_THROTTLE(
                 this->get_node()->get_logger(),
                 *this->get_node()->get_clock(),
-                2000,
+                3000,
                 "尚未收到 myjoints_target，当前按零目标输出（可忽略，收到目标后自动恢复）");
         }
 
@@ -626,10 +677,13 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             q_kdl(i)   = (i < target.positions.size()) ? target.positions[i] : 0.0;
             dq_kdl(i)  = (i < target.velocities.size()) ? target.velocities[i] : 0.0;
             ddq_kdl(i) = (i < target.accelerations.size()) ? target.accelerations[i] : 0.0;
-            std::cout << "[DEBUG] q_kdl(" << i << ") = " << q_kdl(i) << "   ";
-            std::cout << "[DEBUG] dq_kdl(" << i << ") = " << dq_kdl(i) << "   ";
-            std::cout << "[DEBUG] ddq_kdl(" << i << ") = " << ddq_kdl(i) << std::endl;
-            std::cout << "[DEBUG] ====================" << std::endl;
+            RCLCPP_INFO_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                3000,
+                "[DEBUG] q_kdl(%zu) = %.6f, dq_kdl(%zu) = %.6f, ddq_kdl(%zu) = %.6f",
+                i, q_kdl(i), i, dq_kdl(i), i, ddq_kdl(i)
+            );
         }
 
         // 动力学计算
@@ -643,10 +697,13 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
             command_interfaces_[i * 3 + 0].set_value(pos);
             command_interfaces_[i * 3 + 1].set_value(vel);
             command_interfaces_[i * 3 + 2].set_value(eff);
-            std::cout << "[DEBUG] pos(" << i << ") = " << pos << "   ";
-            std::cout << "[DEBUG] vel(" << i << ") = " << vel << "   ";
-            std::cout << "[DEBUG] eff(" << i << ") = " << eff << std::endl;
-            std::cout << "[DEBUG] ====================" << std::endl;
+            RCLCPP_INFO_THROTTLE(
+                this->get_node()->get_logger(),
+                *this->get_node()->get_clock(),
+                3000,
+                "[DEBUG] pos(%zu) = %.6f, vel(%zu) = %.6f, eff(%zu) = %.6f",
+                i, pos, i, vel, i, eff
+            );
         }
 
         return controller_interface::return_type::OK;

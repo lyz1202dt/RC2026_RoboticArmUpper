@@ -1640,16 +1640,18 @@ void ArmHandleNode::visionCallback(const geometry_msgs::msg::PoseStamped::Shared
             query_stamp = node->now();
         }
 
+        // 使用最新可用的TF，避免时间戳同步问题导致的extrapolation错误
+        // TF buffer会自动找到最接近query_stamp的变换，在100ms容差范围内
         auto tf = camera_link0_tf_buffer->lookupTransform(
             "base_link",
             "camera_link",
             query_stamp,
-            tf2::durationFromSec(0.02)
+            tf2::durationFromSec(0.1)  // 容差增加至100ms，容纳相机时间戳延迟
         );
 
         tf2::doTransform(pose_in_camera, transformed_pose, tf);
     } catch (const tf2::TransformException &ex) {
-        RCLCPP_WARN(node->get_logger(), "警告：TF变换失败: %s", ex.what());
+        RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "警告：TF变换失败: %s", ex.what());
         return;
     }
 

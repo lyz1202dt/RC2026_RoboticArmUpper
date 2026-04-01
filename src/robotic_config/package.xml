@@ -41,6 +41,8 @@
   <exec_depend>control_pack</exec_depend>
   <exec_depend>mujoco_ros2_control</exec_depend>
   <exec_depend>arm_calc</exec_depend>
+  <exec_depend>robotic_task</exec_depend>
+  <exec_depend>camera_pkg</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>rviz_common</exec_depend>
   <exec_depend>rviz_default_plugins</exec_depend>

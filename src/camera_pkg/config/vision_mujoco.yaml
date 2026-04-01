@@ -1,0 +1,17 @@
+vision_arm_node:
+  ros__parameters:
+    pose_topic: robotic_task_
+    action_name: robotic_task
+    action_type: 2
+    auto_send_action_once: true
+    reset_goal_when_target_lost: true
+    target_lost_reset_frames: 30
+
+    use_realsense: false
+    fallback_to_sim_on_rs_failure: true
+    enable_visualization: true
+
+    sim_rate_hz: 20.0
+    sim_frame_id: base_link
+    sim_target_position: [0.45, 0.00, 0.28]
+    sim_target_orientation: [0.0, 0.0, 0.0, 1.0]

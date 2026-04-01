@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(mujoco_ros2_control)
 
+# CMake 4.x rejects very old policy baselines used by some MuJoCo third-party
+# dependencies (for example tinyobjloader). Keep a compatible minimum here.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+    set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "" FORCE)
+endif()
+
 # Set default C standards
 if(NOT CMAKE_C_STANDARD)
     set(CMAKE_C_STANDARD 99)
@@ -63,6 +69,8 @@ set(MUJOCO_TEST_PYTHON_UTIL OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 set(BUILD_SIMULATE ON CACHE BOOL "" FORCE)
+set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+set(SPDLOG_FMT_EXTERNAL_HO OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(mujoco)
 
