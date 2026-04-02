@@ -12,14 +12,12 @@ import os
 def generate_launch_description():
     robotic_arm_share = get_package_share_directory("robotic_arm")
     robotic_config_share = get_package_share_directory("robotic_config")
-    camera_pkg_share = get_package_share_directory("camera_pkg")
     moveit_config = MoveItConfigsBuilder("robotic_arm", package_name="robotic_config").to_moveit_configs()
     arm_joint_states_topic = "/joint_state_broadcaster/joint_states"
 
     urdf_path = os.path.join(robotic_arm_share, "urdf", "robotic_arm_mujoco.urdf")
     controller_yaml = os.path.join(robotic_config_share, "config", "ros2_controllers_mujoco.yaml")
     rviz_path = os.path.join(robotic_config_share, "config", "moveit.rviz")
-    camera_sim_params = os.path.join(camera_pkg_share, "config", "vision_mujoco.yaml")
 
     with open(urdf_path, "r", encoding="utf-8") as inf:
         robot_desc = inf.read()
@@ -65,13 +63,30 @@ def generate_launch_description():
     start_camera_arg = DeclareLaunchArgument(
         "start_camera",
         default_value="true",
-        description="Whether to start camera node for visual target publishing",
+        description="Whether to start pnp_ros node for real camera visual target publishing",
     )
 
     start_camera_tf_arg = DeclareLaunchArgument(
         "start_camera_tf",
         default_value="true",
         description="Whether to publish static TF from link5 to camera_link",
+    )
+    
+    # 真实相机相对于link5的偏移（根据实际安装位置调整）
+    camera_x_arg = DeclareLaunchArgument(
+        "camera_x",
+        default_value="0.01",
+        description="Camera X offset from link5 (meters)",
+    )
+    camera_y_arg = DeclareLaunchArgument(
+        "camera_y",
+        default_value="0.01",
+        description="Camera Y offset from link5 (meters)",
+    )
+    camera_z_arg = DeclareLaunchArgument(
+        "camera_z",
+        default_value="0.0",
+        description="Camera Z offset from link5 (meters)",
     )
 
     robot_state_pub = Node(
@@ -136,19 +151,26 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_arm_calc")),
     )
 
-
-    camera_node = Node(
-        package="camera_pkg",
-        executable="camera",
-        parameters=[camera_sim_params, {"use_sim_time": True}],
+    # 真实摄像头 PnP 节点
+    pnp_ros_node = Node(
+        package="pnp_ros",
+        executable="pnp_ros_node",
+        parameters=[{"use_sim_time": True}],
         output="screen",
         condition=IfCondition(LaunchConfiguration("start_camera")),
     )
 
+    # 真实相机相对于link5的静态TF（根据实际安装位置调整）
     camera_static_tf = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
-        arguments=["0", "0", "0", "0", "0", "0", "link5", "camera_link"],
+        arguments=[
+            LaunchConfiguration("camera_x"),
+            LaunchConfiguration("camera_y"),
+            LaunchConfiguration("camera_z"),
+            "0", "0", "0",
+            "link5", "camera_link"
+        ],
         parameters=[{"use_sim_time": True}],
         output="screen",
         condition=IfCondition(LaunchConfiguration("start_camera_tf")),
@@ -217,13 +239,16 @@ def generate_launch_description():
         start_robotic_task_arg,
         start_camera_arg,
         start_camera_tf_arg,
+        camera_x_arg,
+        camera_y_arg,
+        camera_z_arg,
         robot_state_pub,
         mujoco,
         load_controller,
         camera_static_tf,
         move_group,
         robotic_task,
-        camera_node,
+        pnp_ros_node,
         arm_calc,
         rviz2,
     ])
