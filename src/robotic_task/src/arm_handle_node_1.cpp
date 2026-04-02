@@ -77,7 +77,7 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     constexpr double kBoxSize = 0.35;
     constexpr double kHalfSize = kBoxSize * 0.5;
     constexpr double kPrepareDistance = 0.05;  // 表面外 5cm
-    constexpr double kGraspInsideDistance = 0.02;     // 表面内 2cm
+    constexpr double kGraspInsideDistance = 0.035;     // 表面内 3.5cm
 
     (void)approach_distance;
 
@@ -121,36 +121,36 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     grasp_pose.position.x = grasp_pos_vec.x();
     grasp_pose.position.y = grasp_pos_vec.y();
     grasp_pose.position.z = grasp_pos_vec.z();
-    grasp_pose.orientation = prepare_pose.orientation;
+    grasp_pose.orientation.w = 0.7372;
+    grasp_pose.orientation.x = 0.0;
+    grasp_pose.orientation.y = -0.6759;
+    grasp_pose.orientation.z = 0.0;
 
+    // RCLCPP_INFO_THROTTLE(
+    //     node->get_logger(),
+    //     *node->get_clock(),
+    //     1000,
+    //     "calculate_prepare_pos: box_center=(%.3f, %.3f, %.3f), side_center=(%.3f, %.3f, %.3f)",
+    //     center.x(), center.y(), center.z(),
+    //     side_center.x(), side_center.y(), side_center.z()
+    // );
     RCLCPP_INFO_THROTTLE(
         node->get_logger(),
         *node->get_clock(),
         1000,
-        "calculate_prepare_pos: box_center=(%.3f, %.3f, %.3f), side_center=(%.3f, %.3f, %.3f)",
-        center.x(), center.y(), center.z(),
-        side_center.x(), side_center.y(), side_center.z()
-    );
-    RCLCPP_INFO_THROTTLE(
-        node->get_logger(),
-        *node->get_clock(),
-        1000,
-        "calculate_prepare_pos: dir=(%.3f, %.3f, %.3f), prepare_dist=%.3f, prepare=(%.3f, %.3f, %.3f), grasp=(%.3f, %.3f, %.3f), quat=(w:%.4f,x:%.4f,y:%.4f,z:%.4f)",
-        inward_dir.x(), inward_dir.y(), inward_dir.z(),
-        kPrepareDistance,
-        prepare_pos_vec.x(), prepare_pos_vec.y(), prepare_pos_vec.z(),
+        "calculate_prepare_pos: grasp=(%.3f, %.3f, %.3f), quat=(w:%.4f,x:%.4f,y:%.4f,z:%.4f)",
         grasp_pos_vec.x(), grasp_pos_vec.y(), grasp_pos_vec.z(),
-        prepare_pose.orientation.w,
-        prepare_pose.orientation.x,
-        prepare_pose.orientation.y,
-        prepare_pose.orientation.z
+        grasp_pose.orientation.w,
+        grasp_pose.orientation.x,
+        grasp_pose.orientation.y,
+        grasp_pose.orientation.z
     );
 
     RCLCPP_INFO_THROTTLE(
         node->get_logger(),
         *node->get_clock(),
         1000,
-        "calculate_prepare_pos: 严格按plan固定预抓取距离5cm、抓取进入2cm"
+        "calculate_prepare_pos: 严格按plan固定预抓取距离5cm、抓取进入3.5cm"
     );
 
     return prepare_pose;
