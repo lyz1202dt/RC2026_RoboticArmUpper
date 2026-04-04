@@ -198,64 +198,24 @@ controller_interface::CallbackReturn MixController::on_init() {
     param_query_node_ = std::make_shared<rclcpp::Node>("robotic_arm_controller_param_client");
 
     // 创建订阅（在 on_init 时创建，确保使用控制器的节点和 executor）
-    twist_subscriber_ = this->get_node()->create_subscription<geometry_msgs::msg::Twist>(
-        "twist_command", 10, 
-        [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
-            // 处理接收到的 Twist 消息
-            RCLCPP_DEBUG_THROTTLE(
-                this->get_node()->get_logger(),
-                *this->get_node()->get_clock(),
-                3000,
-                "Received Twist command: linear=(%f, %f, %f), angular=(%f, %f, %f)",
-                msg->linear.x,
-                msg->linear.y,
-                msg->linear.z,
-                msg->angular.x,
-                msg->angular.y,
-                msg->angular.z
-            );
-            twist_command_ = *msg; // 保存接收到的 Twist 命令
-            kdl_twist_command_.vel = KDL::Vector(twist_command_.linear.x, twist_command_.linear.y, twist_command_.linear.z);
-            kdl_twist_command_.rot = KDL::Vector(twist_command_.angular.x, twist_command_.angular.y, twist_command_.angular.z);
-            auto ik_solver_ = std::make_shared<KDL::ChainIkSolverVel_pinv>(chain); // 创建逆运动学求解器
-            const size_t state_stride = mujoco_mode_ ? 3 : 2;
-            if (state_interfaces_.size() < joint_names_.size() * state_stride) {
-                return;
-            }
-
-            KDL::JntArray q_current(joint_names_.size()); // 当前关节位置
-            for (size_t i = 0; i < joint_names_.size(); ++i) {
-                q_current(i) = state_interfaces_[i * state_stride + 0].get_value(); // 从状态接口获取当前关节位置
-            }
-
-            if (q_dot_.rows() != static_cast<unsigned int>(joint_names_.size())) {
-                q_dot_.resize(joint_names_.size());
-            }
-
-            int ik_result = ik_solver_->CartToJnt(q_current, kdl_twist_command_, q_dot_); // 计算逆运动学，得到关节速度命令
-            if (ik_result < 0) {
-                RCLCPP_ERROR(this->get_node()->get_logger(), "Failed to compute IK solution for the given twist command");
-                return;
-            }
-        });
 
     initial_joint_trajectory_subscriber_ = this->get_node()->create_subscription<trajectory_msgs::msg::JointTrajectory>(
         "initial_joint_trajectory", 10,
         [this](const trajectory_msgs::msg::JointTrajectory::SharedPtr msg) {
-             RCLCPP_INFO_THROTTLE(
-                this->get_node()->get_logger(),
-                *this->get_node()->get_clock(),
-                3000,
-                "[接收到轨迹消息] header.stamp=(sec=%d, nsec=%u), joint_names.size=%zu, points.size=%zu",
-                static_cast<int>(msg->header.stamp.sec),
-                static_cast<unsigned int>(msg->header.stamp.nanosec),
-                msg->joint_names.size(),
-                msg->points.size()
-            );
+            //  RCLCPP_INFO_THROTTLE(
+            //     this->get_node()->get_logger(),
+            //     *this->get_node()->get_clock(),
+            //     3000,
+            //     "[接收到轨迹消息] header.stamp=(sec=%d, nsec=%u), joint_names.size=%zu, points.size=%zu",
+            //     static_cast<int>(msg->header.stamp.sec),
+            //     static_cast<unsigned int>(msg->header.stamp.nanosec),
+            //     msg->joint_names.size(),
+            //     msg->points.size()
+            // );
 
             // 检查轨迹点是否有效
             if (msg->points.empty()) {
-                RCLCPP_WARN(this->get_node()->get_logger(), "Received empty trajectory");
+                // RCLCPP_WARN(this->get_node()->get_logger(), "接收到的轨迹消息没有轨迹点，忽略");
                 return;
             }
 
@@ -278,14 +238,14 @@ controller_interface::CallbackReturn MixController::on_init() {
                 all_finite(point.accelerations, expected_dof);
 
             if (!valid_target) {
-                RCLCPP_WARN(
-                    this->get_node()->get_logger(),
-                    "实时轨迹首点无效，忽略本次更新: pos=%zu vel=%zu acc=%zu expected=%zu",
-                    point.positions.size(),
-                    point.velocities.size(),
-                    point.accelerations.size(),
-                    expected_dof
-                );
+                // RCLCPP_WARN(
+                //     this->get_node()->get_logger(),
+                //     "实时轨迹首点无效，忽略本次更新: pos=%zu vel=%zu acc=%zu expected=%zu",
+                //     point.positions.size(),
+                //     point.velocities.size(),
+                //     point.accelerations.size(),
+                //     expected_dof
+                // );
                 return;
             }
 
@@ -294,44 +254,44 @@ controller_interface::CallbackReturn MixController::on_init() {
                 std::lock_guard<std::mutex> lock(realtime_target_mutex_);
                 realtime_target_ = point;
                 
-                // 验证接收到的数据
-                RCLCPP_INFO_THROTTLE(
-                    this->get_node()->get_logger(),
-                    *this->get_node()->get_clock(),
-                    3000,
-                    "[接收数据验证] positions.size=%zu, velocities.size=%zu, accelerations.size=%zu",
-                    point.positions.size(),
-                    point.velocities.size(),
-                    point.accelerations.size()
-                );
+                // // 验证接收到的数据
+                // RCLCPP_INFO_THROTTLE(
+                //     this->get_node()->get_logger(),
+                //     *this->get_node()->get_clock(),
+                //     3000,
+                //     "[接收数据验证] positions.size=%zu, velocities.size=%zu, accelerations.size=%zu",
+                //     point.positions.size(),
+                //     point.velocities.size(),
+                //     point.accelerations.size()
+                // );
                 
-                // 打印前 3 个位置和速度数据
-                if (!msg->points[0].positions.empty()) {
-                    RCLCPP_INFO_THROTTLE(
-                        this->get_node()->get_logger(),
-                        *this->get_node()->get_clock(),
-                        3000,
-                        "[接收数据示例] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
-                        point.positions[0],
-                        point.positions.size() > 1 ? point.positions[1] : 0.0,
-                        point.positions.size() > 2 ? point.positions[2] : 0.0,
-                        point.velocities.size() > 0 ? point.velocities[0] : 0.0,
-                        point.velocities.size() > 1 ? point.velocities[1] : 0.0,
-                        point.velocities.size() > 2 ? point.velocities[2] : 0.0
-                    );
-                }
+                // // 打印前 3 个位置和速度数据
+                // if (!msg->points[0].positions.empty()) {
+                //     RCLCPP_INFO_THROTTLE(
+                //         this->get_node()->get_logger(),
+                //         *this->get_node()->get_clock(),
+                //         3000,
+                //         "[接收数据示例] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
+                //         point.positions[0],
+                //         point.positions.size() > 1 ? point.positions[1] : 0.0,
+                //         point.positions.size() > 2 ? point.positions[2] : 0.0,
+                //         point.velocities.size() > 0 ? point.velocities[0] : 0.0,
+                //         point.velocities.size() > 1 ? point.velocities[1] : 0.0,
+                //         point.velocities.size() > 2 ? point.velocities[2] : 0.0
+                //     );
+                // }
             }
 
             realtime_target_ready_.store(true, std::memory_order_relaxed);
 
             // 设置实时流模式标志
             is_realtime_stream_.store(true, std::memory_order_relaxed);
-            RCLCPP_INFO_THROTTLE(
-                this->get_node()->get_logger(),
-                *this->get_node()->get_clock(),
-                3000,
-                "已设置实时流模式标志"
-            );
+            // RCLCPP_INFO_THROTTLE(
+            //     this->get_node()->get_logger(),
+            //     *this->get_node()->get_clock(),
+            //     3000,
+            //     "已设置实时流模式标志"
+            // );
         }
     );
 
@@ -356,13 +316,13 @@ controller_interface::CallbackReturn MixController::on_init() {
                 realtime_target_ready_.store(false, std::memory_order_relaxed);
             }
 
-            RCLCPP_DEBUG_THROTTLE(
-                this->get_node()->get_logger(),
-                *this->get_node()->get_clock(),
-                3000,
-                "接受到使用 moveit: use_moveit=%d",
-                UseMoveit.load(std::memory_order_relaxed)
-            );
+            // RCLCPP_DEBUG_THROTTLE(
+            //     this->get_node()->get_logger(),
+            //     *this->get_node()->get_clock(),
+            //     3000,
+            //     "接受到使用 moveit: use_moveit=%d",
+            //     UseMoveit.load(std::memory_order_relaxed)
+            // );
             is_realtime_stream_.store(current);
         }
     );
@@ -411,6 +371,7 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     (void)previous_state;
     const std::string control_mode = this->get_node()->get_parameter("control_mode").as_string();
     mujoco_mode_ = (control_mode == "mujoco");
+
     RCLCPP_INFO(this->get_node()->get_logger(), "on_configure control_mode=%s, mujoco_mode=%d", control_mode.c_str(), mujoco_mode_ ? 1 : 0);
 
     if (mujoco_mode_) {
@@ -428,7 +389,7 @@ controller_interface::CallbackReturn MixController::on_configure(const rclcpp_li
     RCLCPP_INFO(get_node()->get_logger(), "尝试解析URDF");
 
     if (!param_query_node_) {
-        RCLCPP_ERROR(get_node()->get_logger(), "参数查询节点未初始化");
+        // RCLCPP_ERROR(get_node()->get_logger(), "参数查询节点未初始化");
         return controller_interface::CallbackReturn::ERROR;
     }
 
@@ -600,26 +561,26 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
                     joints_target_.joints[i].omega = static_cast<float>(target.velocities[i]);
                     joints_target_.joints[i].torque = 0.0f;
                 }
-                RCLCPP_INFO_THROTTLE(
-                    this->get_node()->get_logger(),
-                    *this->get_node()->get_clock(),
-                    3000,
-                    "[实时流执行] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
-                    target.positions[0],
-                    target.positions.size() > 1 ? target.positions[1] : 0.0,
-                    target.positions.size() > 2 ? target.positions[2] : 0.0,
-                    target.velocities[0],
-                    target.velocities.size() > 1 ? target.velocities[1] : 0.0,
-                    target.velocities.size() > 2 ? target.velocities[2] : 0.0
-                );
+                // RCLCPP_INFO_THROTTLE(
+                //     this->get_node()->get_logger(),
+                //     *this->get_node()->get_clock(),
+                //     3000,
+                //     "[实时流执行] pos[0-2]=[%.6f, %.6f, %.6f], vel[0-2]=[%.6f, %.6f, %.6f]",
+                //     target.positions[0],
+                //     target.positions.size() > 1 ? target.positions[1] : 0.0,
+                //     target.positions.size() > 2 ? target.positions[2] : 0.0,
+                //     target.velocities[0],
+                //     target.velocities.size() > 1 ? target.velocities[1] : 0.0,
+                //     target.velocities.size() > 2 ? target.velocities[2] : 0.0
+                // );
             } else {
-                RCLCPP_WARN_THROTTLE(
-                    this->get_node()->get_logger(),
-                    *this->get_node()->get_clock(),
-                    3000,
-                    "[实时流警告] 目标点数据不完整: pos.size=%zu, vel.size=%zu, expected=%zu",
-                    target.positions.size(), target.velocities.size(), dof
-                );
+                // RCLCPP_WARN_THROTTLE(
+                //     this->get_node()->get_logger(),
+                //     *this->get_node()->get_clock(),
+                //     3000,
+                //     "[实时流警告] 目标点数据不完整: pos.size=%zu, vel.size=%zu, expected=%zu",
+                //     target.positions.size(), target.velocities.size(), dof
+                // );
             }
         } else if (trajectory_active) {
             const bool has_point = continue_trajectory.get_target(time, output_state);
@@ -666,11 +627,11 @@ controller_interface::return_type MixController::update(const rclcpp::Time& time
                 }
             }
         } else if (!target_received_.load(std::memory_order_relaxed)) {
-            RCLCPP_WARN_THROTTLE(
-                this->get_node()->get_logger(),
-                *this->get_node()->get_clock(),
-                3000,
-                "尚未收到 myjoints_target，当前按零目标输出（可忽略，收到目标后自动恢复）");
+            // RCLCPP_WARN_THROTTLE(
+            // this->get_node()->get_logger(),
+            // *this->get_node()->get_clock(),
+            // 3000,
+            // "尚未收到 myjoints_target，当前按零目标输出（可忽略，收到目标后自动恢复）");
         }
 
         for (size_t i = 0; i < dof; ++i) {

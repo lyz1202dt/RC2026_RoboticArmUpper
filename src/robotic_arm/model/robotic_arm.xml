@@ -46,6 +46,7 @@
               <inertial pos="0.0486577 0.00239487 0.000127055" quat="-0.018087 0.706875 0.018087 0.706875" mass="0.0698722" diaginertia="2.26008e-05 1.97895e-05 1.56269e-05"/>
               <joint name="joint5" pos="0 0 0" axis="0 0 1" range="-0.610865 0.610865" actuatorfrcrange="-50 50"/>
               <geom type="mesh" rgba="0.294118 0.294118 0.294118 1" mesh="link5"/>
+              <camera name="camera_link" pos="0.1 0.01 0.05" quat="0.000563089 -0.707105 0.000563087 0.707108"/>
               <body name="link6" pos="0.073796 0.0036822 8.8922e-05" quat="0.000563087 0.707108 -0.000563089 0.707105">
                 <inertial pos="0 0 0.0193009" quat="0.5 0.5 -0.5 0.5" mass="0.128099" diaginertia="9.58412e-05 6.47697e-05 6.47697e-05"/>
                 <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159" actuatorfrcrange="-50 50"/>

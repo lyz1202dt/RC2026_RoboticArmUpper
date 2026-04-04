@@ -74,6 +74,15 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     geometry_msgs::msg::Pose &grasp_pose
     ) 
 {
+    // 添加调试日志，确认输入位姿
+    RCLCPP_INFO_THROTTLE(
+        node->get_logger(),
+        *node->get_clock(),
+        10,
+        "[DEBUG] calculate_prepare_pos 输入 box_pos: Pos(%.3f, %.3f, %.3f)",
+        box_pos.position.x, box_pos.position.y, box_pos.position.z
+    );
+
     constexpr double kBoxSize = 0.35;
     constexpr double kHalfSize = kBoxSize * 0.5;
     constexpr double kPrepareDistance = 0.05;  // 表面外 5cm
@@ -98,7 +107,7 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     const Eigen::Vector3d inward_dir(robot_to_box_xy.x(), robot_to_box_xy.y(), 0.0);
 
     // 靠近机器人的侧面中心点。
-    const Eigen::Vector3d side_center = center - inward_dir * kHalfSize;
+    const Eigen::Vector3d side_center = center; // - inward_dir * kHalfSize;
 
     // 预抓取：表面外；抓取：表面内。
     const Eigen::Vector3d prepare_pos_vec = side_center - inward_dir * kPrepareDistance;
@@ -106,7 +115,7 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
 
     // 固定侧抓姿态：末端朝向水平并垂直于物块侧面。
     tf2::Quaternion q;
-    q.setRPY(0.0, -M_PI_2, 0.0);
+    q.setRPY(0.0, M_PI_2, 0.0);
     q.normalize();
 
     geometry_msgs::msg::Pose prepare_pose;
@@ -121,15 +130,15 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     grasp_pose.position.x = grasp_pos_vec.x();
     grasp_pose.position.y = grasp_pos_vec.y();
     grasp_pose.position.z = grasp_pos_vec.z();
-    grasp_pose.orientation.w = 0.7372;
-    grasp_pose.orientation.x = 0.0;
-    grasp_pose.orientation.y = -0.6759;
-    grasp_pose.orientation.z = 0.0;
+    grasp_pose.orientation.w = -q.w();
+    grasp_pose.orientation.x = q.x();
+    grasp_pose.orientation.y = -q.y();
+    grasp_pose.orientation.z = q.z();
 
     RCLCPP_INFO_THROTTLE(
         node->get_logger(),
         *node->get_clock(),
-        1000,
+        10,
         "计算出的grasp_pose: Position: (%.3f, %.3f, %.3f), Orientation: (w:%.4f,x:%.4f,y:%.4f,z:%.4f)",
         grasp_pos_vec.x(), grasp_pos_vec.y(), grasp_pos_vec.z(),
         grasp_pose.orientation.w,
@@ -137,13 +146,6 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
         grasp_pose.orientation.y,
         grasp_pose.orientation.z
     );
-
-    // RCLCPP_INFO_THROTTLE(
-    //     node->get_logger(),
-    //     *node->get_clock(),
-    //     1000,
-    //     "calculate_prepare_pos: 严格按plan固定预抓取距离5cm、抓取进入3.5cm"
-    // );
 
     return prepare_pose;
 }

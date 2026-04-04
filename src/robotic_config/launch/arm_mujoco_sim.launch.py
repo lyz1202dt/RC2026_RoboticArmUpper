@@ -63,7 +63,49 @@ def generate_launch_description():
     start_camera_arg = DeclareLaunchArgument(
         "start_camera",
         default_value="true",
-        description="Whether to start pnp_ros node for real camera visual target publishing",
+        description="Whether to start pnp_ros node for visual target publishing",
+    )
+
+    camera_source_arg = DeclareLaunchArgument(
+        "camera_source",
+        default_value="sim",
+        description="pnp_ros camera source: sim or real",
+    )
+
+    sim_image_topic_arg = DeclareLaunchArgument(
+        "sim_image_topic",
+        default_value="/camera_link/color/image_raw",
+        description="Image topic used by pnp_ros in sim mode",
+    )
+
+    sim_camera_fovy_deg_arg = DeclareLaunchArgument(
+        "sim_camera_fovy_deg",
+        default_value="45.0",
+        description="Vertical FOV (deg) for sim camera intrinsics in pnp_ros",
+    )
+
+    sim_bias_x_m_arg = DeclareLaunchArgument(
+        "sim_bias_x_m",
+        default_value="0.0",
+        description="Simulation-only x bias compensation added to /box_pose in base_link",
+    )
+
+    sim_bias_y_m_arg = DeclareLaunchArgument(
+        "sim_bias_y_m",
+        default_value="0.0",
+        description="Simulation-only y bias compensation added to /box_pose in base_link",
+    )
+
+    pnp_camera_frame_arg = DeclareLaunchArgument(
+        "pnp_camera_frame",
+        default_value="camera_optical_frame",
+        description="Frame id used by pnp_ros for solvePnP output before transforming to base_link",
+    )
+
+    real_video_device_id_arg = DeclareLaunchArgument(
+        "real_video_device_id",
+        default_value="4",
+        description="Video device id used by pnp_ros in real mode",
     )
 
     start_camera_tf_arg = DeclareLaunchArgument(
@@ -75,7 +117,7 @@ def generate_launch_description():
     # 真实相机相对于link5的偏移（根据实际安装位置调整）
     camera_x_arg = DeclareLaunchArgument(
         "camera_x",
-        default_value="0.01",
+        default_value="0.1",
         description="Camera X offset from link5 (meters)",
     )
     camera_y_arg = DeclareLaunchArgument(
@@ -85,7 +127,7 @@ def generate_launch_description():
     )
     camera_z_arg = DeclareLaunchArgument(
         "camera_z",
-        default_value="0.0",
+        default_value="0.05",
         description="Camera Z offset from link5 (meters)",
     )
 
@@ -155,21 +197,34 @@ def generate_launch_description():
     pnp_ros_node = Node(
         package="pnp_ros",
         executable="pnp_ros_node",
-        parameters=[{"use_sim_time": True}],
+        parameters=[
+            {"use_sim_time": True},
+            {"camera_source": LaunchConfiguration("camera_source")},
+            {"sim_image_topic": LaunchConfiguration("sim_image_topic")},
+            {"sim_camera_fovy_deg": LaunchConfiguration("sim_camera_fovy_deg")},
+            {"sim_bias_x_m": LaunchConfiguration("sim_bias_x_m")},
+            {"sim_bias_y_m": LaunchConfiguration("sim_bias_y_m")},
+            {"pnp_camera_frame": LaunchConfiguration("pnp_camera_frame")},
+            {"real_video_device_id": LaunchConfiguration("real_video_device_id")},
+        ],
         output="screen",
         condition=IfCondition(LaunchConfiguration("start_camera")),
     )
 
-    # 真实相机相对于link5的静态TF（根据实际安装位置调整）
+    # 真实相机相对于link5的静态TF（与MJCF中camera_link姿态保持一致，方向与末端相反）
     camera_static_tf = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
         arguments=[
-            LaunchConfiguration("camera_x"),
-            LaunchConfiguration("camera_y"),
-            LaunchConfiguration("camera_z"),
-            "0", "0", "0",
-            "link5", "camera_link"
+            "--x", LaunchConfiguration("camera_x"),
+            "--y", LaunchConfiguration("camera_y"),
+            "--z", LaunchConfiguration("camera_z"),
+            "--qx", "-0.707105",
+            "--qy", "0.000563087",
+            "--qz", "0.707108",
+            "--qw", "0.000563089",
+            "--frame-id", "link5",
+            "--child-frame-id", "camera_link",
         ],
         parameters=[{"use_sim_time": True}],
         output="screen",
@@ -252,6 +307,13 @@ def generate_launch_description():
         start_move_group_arg,
         start_robotic_task_arg,
         start_camera_arg,
+        camera_source_arg,
+        sim_image_topic_arg,
+        sim_camera_fovy_deg_arg,
+        sim_bias_x_m_arg,
+        sim_bias_y_m_arg,
+        pnp_camera_frame_arg,
+        real_video_device_id_arg,
         start_camera_tf_arg,
         camera_x_arg,
         camera_y_arg,

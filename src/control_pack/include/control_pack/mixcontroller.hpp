@@ -145,8 +145,6 @@ private:
 
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_subscriber_;
-    geometry_msgs::msg::Twist twist_command_;
-    KDL::Twist kdl_twist_command_;
     KDL::JntArray q_dot_;
     size_t kdl_dof_{0};
 

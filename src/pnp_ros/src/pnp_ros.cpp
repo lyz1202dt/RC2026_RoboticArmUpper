@@ -3,10 +3,13 @@
 #include <rclcpp/logging.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/subscription.hpp>
 #include <rclcpp/timer.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/image_encodings.hpp>
+#include <cv_bridge/cv_bridge.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2_ros/buffer.h>
@@ -20,6 +23,7 @@
 #include <cmath>
 #include <thread>
 #include <atomic>
+#include <mutex>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
@@ -29,7 +33,7 @@ using namespace cv;
 // ================================================================
 //  常量配置区
 // ================================================================
-static const float BOX_MM = 350.0f;
+static const float BOX_MM = 200.0f;
 static const float HALF = BOX_MM / 2.f;
 static const double MIN_AREA = 8000.0;
 static const int SMOOTH_N = 6;
@@ -109,6 +113,41 @@ vector<Point2f> sortCorners(const vector<Point2f>& in) {
     }
     r[0]=in[tl]; r[1]=in[tr]; r[2]=in[br]; r[3]=in[bl];
     return r;
+}
+
+vector<Point2f> reorderCornersByReference(
+    const vector<Point2f>& detected,
+    const vector<Point2f>& reference) {
+    if (detected.size() != 4 || reference.size() != 4) {
+        return detected;
+    }
+
+    static const array<array<int, 4>, 24> perms = {{
+        {{0,1,2,3}}, {{0,1,3,2}}, {{0,2,1,3}}, {{0,2,3,1}}, {{0,3,1,2}}, {{0,3,2,1}},
+        {{1,0,2,3}}, {{1,0,3,2}}, {{1,2,0,3}}, {{1,2,3,0}}, {{1,3,0,2}}, {{1,3,2,0}},
+        {{2,0,1,3}}, {{2,0,3,1}}, {{2,1,0,3}}, {{2,1,3,0}}, {{2,3,0,1}}, {{2,3,1,0}},
+        {{3,0,1,2}}, {{3,0,2,1}}, {{3,1,0,2}}, {{3,1,2,0}}, {{3,2,0,1}}, {{3,2,1,0}}
+    }};
+
+    double bestCost = 1e30;
+    array<int, 4> bestPerm = perms[0];
+    for (const auto& p : perms) {
+        double cost = 0.0;
+        for (int i = 0; i < 4; ++i) {
+            const Point2f d = detected[p[i]] - reference[i];
+            cost += static_cast<double>(d.x) * d.x + static_cast<double>(d.y) * d.y;
+        }
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestPerm = p;
+        }
+    }
+
+    vector<Point2f> ordered(4);
+    for (int i = 0; i < 4; ++i) {
+        ordered[i] = detected[bestPerm[i]];
+    }
+    return ordered;
 }
 
 Vec3d euler(const Mat& R) {
@@ -203,6 +242,13 @@ struct PoseSmootherVec3 {
     int maxN;
     
     explicit PoseSmootherVec3(int n) : maxN(n) {}
+
+    void setWindow(int n) {
+        maxN = std::max(1, n);
+        while ((int)buf.size() > maxN) {
+            buf.pop_front();
+        }
+    }
     
     Vec3d push(Vec3d v) {
         buf.push_back(v);
@@ -225,6 +271,31 @@ public:
     BoxPnPNode() : Node("box_pnp_node") {
         RCLCPP_INFO(this->get_logger(), "BoxPnPNode 启动");
 
+        camera_source_ = this->declare_parameter<std::string>("camera_source", "real");
+        sim_image_topic_ = this->declare_parameter<std::string>("sim_image_topic", "/camera_link/color/image_raw");
+        real_video_device_id_ = this->declare_parameter<int>("real_video_device_id", 4);
+        sim_camera_fovy_deg_ = this->declare_parameter<double>("sim_camera_fovy_deg", 45.0);
+        force_sim_z_target_ = this->declare_parameter<bool>("force_sim_z_target", true);
+        sim_target_z_m_ = this->declare_parameter<double>("sim_target_z_m", 0.25);
+        sim_bias_x_m_ = this->declare_parameter<double>("sim_bias_x_m", 0.0);
+        sim_bias_y_m_ = this->declare_parameter<double>("sim_bias_y_m", 0.0);
+        min_goal_send_interval_sec_ = this->declare_parameter<double>("min_goal_send_interval_sec", min_goal_send_interval_sec_);
+        goal_pos_threshold_m_ = this->declare_parameter<double>("goal_pos_threshold_m", goal_pos_threshold_m_);
+        goal_angle_threshold_rad_ = this->declare_parameter<double>("goal_angle_threshold_rad", goal_angle_threshold_rad_);
+        std::string default_pnp_frame = (camera_source_ == "sim") ? "camera_link" : "camera_optical_frame";
+        pnp_camera_frame_ = this->declare_parameter<std::string>("pnp_camera_frame", default_pnp_frame);
+        int default_tvec_smooth_n = (camera_source_ == "sim") ? 1 : SMOOTH_N;
+        tvec_smooth_n_ = this->declare_parameter<int>("tvec_smooth_n", default_tvec_smooth_n);
+        tvecSmoother_.setWindow(tvec_smooth_n_);
+        RCLCPP_INFO(this->get_logger(), "tvec_smooth_n=%d", tvec_smooth_n_);
+        RCLCPP_INFO(this->get_logger(), "pnp_camera_frame=%s", pnp_camera_frame_.c_str());
+        RCLCPP_INFO(this->get_logger(), "sim xy bias=(%.4f, %.4f)", sim_bias_x_m_, sim_bias_y_m_);
+
+        if (camera_source_ != "real" && camera_source_ != "sim") {
+            RCLCPP_WARN(this->get_logger(), "未知 camera_source=%s，回退到 real", camera_source_.c_str());
+            camera_source_ = "real";
+        }
+
         // 修复：取消注释以初始化 TF 监听器，否则后续 transform 会崩溃
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -232,34 +303,45 @@ public:
         
         action_client_ = rclcpp_action::create_client<robot_interfaces::action::Catch>(this, "robotic_task");
 
-        RCLCPP_INFO(this->get_logger(), "正在打开摄像头...");
-        if (!open_camera_with_fallback()) {
-            RCLCPP_ERROR(this->get_logger(), "无法打开摄像头，请检查 /dev/video0 权限或设备占用");
-            rclcpp::shutdown();
-            return;
-        }
+        if (camera_source_ == "real") {
+            RCLCPP_INFO(this->get_logger(), "camera_source=real，正在打开摄像头设备 /dev/video%d", real_video_device_id_);
+            if (!open_camera_with_fallback()) {
+                RCLCPP_ERROR(this->get_logger(), "无法打开真实摄像头，请检查 /dev/video 设备权限或占用");
+                rclcpp::shutdown();
+                return;
+            }
 
-        configure_camera_properties();
+            configure_camera_properties();
+
+            Mat frame_tmp;
+            for (int i = 0; i < 30; ++i) {
+                cap_ >> frame_tmp;
+                if (!frame_tmp.empty()) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            if (frame_tmp.empty()) {
+                RCLCPP_ERROR(this->get_logger(), "真实摄像头已打开但连续取帧失败，请确认驱动和分辨率设置");
+                rclcpp::shutdown();
+                return;
+            }
+
+            Size imgSize = frame_tmp.size();
+            newK_ = getOptimalNewCameraMatrix(K, D, imgSize, 0.0, imgSize);
+            initUndistortRectifyMap(K, D, Mat(), newK_, imgSize, CV_32FC1, mapX_, mapY_);
+        } else {
+            RCLCPP_INFO(this->get_logger(), "camera_source=sim，订阅图像话题: %s", sim_image_topic_.c_str());
+            image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
+                sim_image_topic_,
+                rclcpp::SensorDataQoS(),
+                std::bind(&BoxPnPNode::sim_image_callback, this, std::placeholders::_1));
+
+            newK_.release();
+            RCLCPP_INFO(this->get_logger(), "sim模式将根据图像尺寸和fovy=%.2f度自动构造相机内参", sim_camera_fovy_deg_);
+        }
 
         cout << "K:\n" << K << "\nD:\n" << D << "\n";
-
-        Mat frame_tmp;
-        for (int i = 0; i < 30; ++i) {
-            cap_ >> frame_tmp;
-            if (!frame_tmp.empty()) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        if (frame_tmp.empty()) {
-            RCLCPP_ERROR(this->get_logger(), "摄像头已打开但连续取帧失败，请确认驱动和分辨率设置");
-            rclcpp::shutdown();
-            return;
-        }
-
-        Size imgSize = frame_tmp.size();
-        newK_ = getOptimalNewCameraMatrix(K, D, imgSize, 0.0, imgSize);
-        initUndistortRectifyMap(K, D, Mat(), newK_, imgSize, CV_32FC1, mapX_, mapY_);
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(33),
                                          std::bind(&BoxPnPNode::process_frame, this));
@@ -284,33 +366,13 @@ private:
         pose_publisher_->publish(available_pose_);
     }
 
-    bool is_pose_valid(const geometry_msgs::msg::Pose& pose) const {
-        const auto finite = [](double v) { return std::isfinite(v); };
-        const bool position_ok = finite(pose.position.x) && finite(pose.position.y) && finite(pose.position.z);
-        const bool quat_ok = finite(pose.orientation.x) && finite(pose.orientation.y) &&
-                             finite(pose.orientation.z) && finite(pose.orientation.w);
-        if (!position_ok || !quat_ok) {
-            return false;
-        }
-        const double qn = std::sqrt(
-            pose.orientation.x * pose.orientation.x +
-            pose.orientation.y * pose.orientation.y +
-            pose.orientation.z * pose.orientation.z +
-            pose.orientation.w * pose.orientation.w);
-        return qn > 1e-6;
-    }
+
 
     bool should_send_goal(const geometry_msgs::msg::Pose& pose, const rclcpp::Time& now) {
-        if (!is_pose_valid(pose)) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "跳过发送：位姿无效");
-            return false;
-        }
-
         if (has_last_goal_send_time_) {
             const auto dt = now - last_goal_send_time_;
             if (dt < rclcpp::Duration::from_seconds(min_goal_send_interval_sec_)) {
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10,
                                     "跳过发送：节流中");
                 return false;
             }
@@ -329,16 +391,74 @@ private:
                 pose.orientation.w * last_sent_pose_.orientation.w);
             const double clamped_dot = std::clamp(dot, 0.0, 1.0);
             const double angle_delta = 2.0 * std::acos(clamped_dot);
+
+            if (pos_delta < goal_pos_threshold_m_ && angle_delta < goal_angle_threshold_rad_) {
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10,
+                                    "跳过发送：目标变化较小 (dpos=%.4fm, dang=%.3frad)",
+                                    pos_delta, angle_delta);
+                return false;
+            }
         }
 
         return true;
     }
 
+    void sim_image_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
+        try {
+            const std::string encoding = msg->encoding;
+            cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(msg, encoding);
+
+            cv::Mat bgr;
+            if (encoding == sensor_msgs::image_encodings::RGB8) {
+                cv::cvtColor(cv_ptr->image, bgr, COLOR_RGB2BGR);
+            } else {
+                bgr = cv_ptr->image;
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(frame_mutex_);
+                latest_sim_frame_ = bgr.clone();
+                latest_sim_stamp_ = msg->header.stamp;
+                has_sim_frame_ = true;
+            }
+        } catch (const cv_bridge::Exception &e) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                                 "sim 图像转换失败: %s", e.what());
+        }
+    }
+
+    bool acquire_frame(Mat& frame) {
+        if (camera_source_ == "real") {
+            cap_ >> frame;
+            if (frame.empty()) {
+                ++empty_frame_count_;
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                                     "读取到真实相机空帧（count=%d）", empty_frame_count_);
+                reopen_camera_if_needed();
+                return false;
+            }
+            empty_frame_count_ = 0;
+            return true;
+        }
+
+        std::lock_guard<std::mutex> lk(frame_mutex_);
+        if (!has_sim_frame_ || latest_sim_frame_.empty()) {
+            ++sim_no_frame_count_;
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                                 "sim 模式尚未收到图像（topic=%s, miss=%d）",
+                                 sim_image_topic_.c_str(), sim_no_frame_count_);
+            return false;
+        }
+        sim_no_frame_count_ = 0;
+        frame = latest_sim_frame_.clone();
+        return true;
+    }
+
     bool open_camera_with_fallback() {
-        const std::array<int, 3> backends = {CAP_V4L2, CAP_ANY, CAP_GSTREAMER};
+        std::vector<int> backends = {CAP_V4L2, CAP_ANY, CAP_GSTREAMER};
         for (int backend : backends) {
             cap_.release();
-            if (!cap_.open(4, backend)) {
+            if (!cap_.open(real_video_device_id_, backend)) {
                 RCLCPP_WARN(this->get_logger(), "摄像头打开失败，backend=%d", backend);
                 continue;
             }
@@ -379,24 +499,50 @@ private:
 
     void process_frame() {
         Mat frame;
-        cap_ >> frame;
-        if (frame.empty()) {
-            ++empty_frame_count_;
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
-                                 "读取到空帧（count=%d）", empty_frame_count_);
-            reopen_camera_if_needed();
+        if (!acquire_frame(frame)) {
             return;
         }
-        empty_frame_count_ = 0;
 
-        // 去畸变
+        if (camera_source_ == "sim" && !sim_intrinsics_initialized_) {
+            const int w = frame.cols;
+            const int h = frame.rows;
+            if (w > 0 && h > 0) {
+                const double fovy_rad = sim_camera_fovy_deg_ * CV_PI / 180.0;
+                const double fy = 0.5 * static_cast<double>(h) / std::tan(0.5 * fovy_rad);
+                const double fx = fy;
+                const double cx = (static_cast<double>(w) - 1.0) * 0.5;
+                const double cy = (static_cast<double>(h) - 1.0) * 0.5;
+                newK_ = (Mat_<double>(3,3) <<
+                    fx, 0.0, cx,
+                    0.0, fy, cy,
+                    0.0, 0.0, 1.0);
+                sim_intrinsics_initialized_ = true;
+                RCLCPP_INFO(this->get_logger(),
+                            "sim内参已初始化: w=%d h=%d fovy=%.2f fx=%.2f fy=%.2f cx=%.2f cy=%.2f",
+                            w, h, sim_camera_fovy_deg_, fx, fy, cx, cy);
+            }
+        }
+
         Mat undistorted;
-        remap(frame, undistorted, mapX_, mapY_, INTER_LINEAR);
+        if (camera_source_ == "real" && !mapX_.empty() && !mapY_.empty()) {
+            remap(frame, undistorted, mapX_, mapY_, INTER_LINEAR);
+        } else {
+            undistorted = frame;
+        }
         Mat show = undistorted.clone();
 
         Mat debugMask;
         vector<Point2f> rawCorners;
         bool detected = detectBoxCorners(undistorted, rawCorners, debugMask);
+
+        // 对称目标会出现角点索引互换，按上一帧角点身份重排可避免PnP解突然翻转。
+        if (detected && kfs_[0].initialized) {
+            vector<Point2f> refCorners(4);
+            for (int i = 0; i < 4; ++i) {
+                refCorners[i] = kfs_[i].predictOnly();
+            }
+            rawCorners = reorderCornersByReference(rawCorners, refCorners);
+        }
 
         // ----- 卡尔曼平滑角点 -----
         vector<Point2f> smoothCorners(4);
@@ -425,13 +571,58 @@ private:
                 putLabel(show, to_string(i), a + Point2f(8, -8), 0.65, Scalar(255, 255, 0));
             }
 
+            if (!detected) {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 2000,
+                    "角点丢失，跳过本帧PnP解算与目标更新");
+            }
+
             // ----- solvePnP -----
             Mat rvec, tvec;
             Mat zeroDist = Mat::zeros(1, 5, CV_64F);
-            bool pnp_ok = solvePnP(OBJ_PTS, smoothCorners, newK_, zeroDist,
-                                   rvec, tvec, false, SOLVEPNP_IPPE);
+            bool pnp_ok = false;
+            if (detected) {
+                if (has_pnp_seed_) {
+                    rvec = last_rvec_seed_.clone();
+                    tvec = last_tvec_seed_.clone();
+                    pnp_ok = solvePnP(
+                        OBJ_PTS,
+                        rawCorners,
+                        newK_,
+                        zeroDist,
+                        rvec,
+                        tvec,
+                        true,
+                        SOLVEPNP_ITERATIVE);
+                } else {
+                    pnp_ok = solvePnP(
+                        OBJ_PTS,
+                        rawCorners,
+                        newK_,
+                        zeroDist,
+                        rvec,
+                        tvec,
+                        false,
+                        SOLVEPNP_IPPE);
+                    if (pnp_ok) {
+                        solvePnP(
+                            OBJ_PTS,
+                            rawCorners,
+                            newK_,
+                            zeroDist,
+                            rvec,
+                            tvec,
+                            true,
+                            SOLVEPNP_ITERATIVE);
+                    }
+                }
+            }
 
             if (pnp_ok) {
+                last_rvec_seed_ = rvec.clone();
+                last_tvec_seed_ = tvec.clone();
+                has_pnp_seed_ = true;
+
                 Vec3d tv(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
                 Vec3d tvSmooth = tvecSmoother_.push(tv);
                 
@@ -443,6 +634,11 @@ private:
                 Mat R;
                 Rodrigues(rvec, R);
                 Vec3d eu = euler(R);
+
+                // 直接使用PnP解算出的平面中心，避免法向偏移在大俯仰视角下放大x/y系统误差。
+                const double Xc = X;
+                const double Yc = Y;
+                const double Zc = Z;
 
                 Mat tvecSmoothed = (Mat_<double>(3,1) << X, Y, Z);
                 vector<Point3f> axisPts = {
@@ -502,14 +698,14 @@ private:
 
                 }
 
-                // 构造 camera_optical_frame 坐标系下的位姿
+                // 构造 pnp_camera_frame_ 坐标系下的位姿
                 geometry_msgs::msg::PoseStamped pose_camera;
                 // 使用零时间戳请求最新可用 TF，避免仿真时钟和墙钟不一致导致外推失败
                 pose_camera.header.stamp = builtin_interfaces::msg::Time();
-                pose_camera.header.frame_id = "camera_optical_frame"; 
-                pose_camera.pose.position.x = tvSmooth[0] / 1000.0; 
-                pose_camera.pose.position.y = tvSmooth[1] / 1000.0;
-                pose_camera.pose.position.z = tvSmooth[2] / 1000.0;
+                pose_camera.header.frame_id = pnp_camera_frame_;
+                pose_camera.pose.position.x = Xc / 1000.0;
+                pose_camera.pose.position.y = Yc / 1000.0;
+                pose_camera.pose.position.z = Zc / 1000.0;
 
                 
                 tf2::Matrix3x3 tf2_rot(R.at<double>(0,0), R.at<double>(0,1), R.at<double>(0,2),
@@ -525,8 +721,9 @@ private:
                 RCLCPP_INFO_THROTTLE(
                     this->get_logger(),
                     *this->get_clock(),
-                    3000,
-                    "PnP目标位姿(camera_optical_frame): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
+                    10,
+                    "PnP目标位姿(%s): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
+                    pnp_camera_frame_.c_str(),
                     pose_camera.pose.position.x,
                     pose_camera.pose.position.y,
                     pose_camera.pose.position.z,
@@ -551,10 +748,40 @@ private:
 
                     geometry_msgs::msg::PoseStamped pose_base = tf_buffer_->transform(
                         pose_camera, "base_link", tf2::durationFromSec(0.1));
+
+                    if (camera_source_ == "sim" && force_sim_z_target_) {
+                        pose_base.pose.position.z = sim_target_z_m_;
+                    }
+                    if (camera_source_ == "sim") {
+                        pose_base.pose.position.x += sim_bias_x_m_;
+                        pose_base.pose.position.y += sim_bias_y_m_;
+
+                        bool sane = true;
+                        const double px = pose_base.pose.position.x;
+                        const double py = pose_base.pose.position.y;
+                        if (px < 0.0 || px > 1.2 || py < -0.6 || py > 0.6) {
+                            sane = false;
+                        }
+                        if (sane && has_valid_pose_) {
+                            const double dx = px - available_pose_.pose.position.x;
+                            const double dy = py - available_pose_.pose.position.y;
+                            const double jump_xy = std::hypot(dx, dy);
+                            if (jump_xy > 0.12) {
+                                sane = false;
+                            }
+                        }
+                        if (!sane) {
+                            RCLCPP_WARN_THROTTLE(
+                                this->get_logger(), *this->get_clock(), 1000,
+                                "仿真位姿异常，丢弃本帧: x=%.3f y=%.3f", px, py);
+                            return;
+                        }
+                    }
+
                     available_pose_ = pose_base;
                     available_pose_.header.stamp = this->now();
                     has_valid_pose_ = true;
-                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10,
                      "pnp 结算出来 base_link 下的位姿:Pos(%lf, %lf, %lf) Rot(%lf, %lf, %lf, %lf)",
                      pose_base.pose.position.x,
                      pose_base.pose.position.y,
@@ -608,11 +835,6 @@ private:
             RCLCPP_INFO(this->get_logger(), "Action Server 已连接");
         }
 
-        if (!is_pose_valid(target_pose)) {
-            RCLCPP_WARN(this->get_logger(), "目标位姿无效，取消发送");
-            return false;
-        }
-
         auto goal_msg = Catch::Goal();
         goal_msg.target_pose = target_pose;
         goal_msg.action_type = 2;
@@ -663,14 +885,19 @@ private:
     Mat newK_, mapX_, mapY_;
     array<CornerKF, 4> kfs_;
     PoseSmootherVec3 tvecSmoother_{SMOOTH_N};
+    bool has_pnp_seed_ = false;
+    cv::Mat last_rvec_seed_;
+    cv::Mat last_tvec_seed_;
     rclcpp_action::Client<Catch>::SharedPtr action_client_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
 
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     tf2_ros::TransformBroadcaster tf_broadcaster_{this};
 
+    // 当前是否拥有有效的箱子位姿数据
     bool has_valid_pose_ = false;
     bool action_server_ready_ = false;
 
@@ -678,7 +905,7 @@ private:
     int goal_accept_count_ = 0;
     int goal_reject_count_ = 0;
 
-    double min_goal_send_interval_sec_ = 0.6;
+    double min_goal_send_interval_sec_ = 0.001;
     double goal_pos_threshold_m_ = 0.015;
     double goal_angle_threshold_rad_ = 5.0 * CV_PI / 180.0;
 
@@ -690,12 +917,31 @@ private:
 
     std::atomic_bool goal_in_flight_{false};
 
+    std::string camera_source_ = "real";
+    std::string sim_image_topic_ = "/camera_link/color/image_raw";
+    int real_video_device_id_ = 4;
+    double sim_camera_fovy_deg_ = 45.0;
+    bool sim_intrinsics_initialized_ = false;
+    bool force_sim_z_target_ = true;
+    double sim_target_z_m_ = 0.25;
+    double sim_bias_x_m_ = 0.0;
+    double sim_bias_y_m_ = 0.0;
+    int tvec_smooth_n_ = SMOOTH_N;
+    std::string pnp_camera_frame_ = "camera_optical_frame";
+
+    std::mutex frame_mutex_;
+    cv::Mat latest_sim_frame_;
+    builtin_interfaces::msg::Time latest_sim_stamp_;
+    bool has_sim_frame_ = false;
+    int sim_no_frame_count_ = 0;
+
 
 
 
 
 
     geometry_msgs::msg::PoseStamped available_pose_;
+    // geometry_msgs::msg::PoseStamped target_pose_;
     rclcpp::TimerBase::SharedPtr pose_publish_timer_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
 

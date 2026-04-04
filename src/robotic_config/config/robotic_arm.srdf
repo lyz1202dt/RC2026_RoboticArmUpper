@@ -98,7 +98,15 @@
         <joint name="joint5" value="0.000000000"/>
         <joint name="joint6" value="0.000000000"/>
     </group_state>
-    
+        <group_state name="start_pos_3" group="robotic_arm">
+        <joint name="joint1" value="0.104719755"/>
+        <joint name="joint2" value="-0.261799388"/>
+        <joint name="joint3" value="-2.705260341"/>
+        <joint name="joint4" value="1.378810109"/>
+        <joint name="joint5" value="-0.069813170"/>
+        <joint name="joint6" value="0.000000000"/>
+    </group_state>
+
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
     <!-- 碰撞排除定义 -->
     <disable_collisions link1="base_link" link2="link1" reason="User"/>

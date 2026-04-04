@@ -93,9 +93,6 @@ private:
     std::atomic<int> current_kfs_num{0}; // kfs的数量
     
 
-    std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer; // 坐标变换
-    std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener;
-    geometry_msgs::msg::TransformStamped camera_link0_tf;
     std::unique_ptr<tf2_ros::Buffer> object_link0_tf_buffer;
     std::shared_ptr<tf2_ros::TransformListener> object_link0_tf_listener;
     geometry_msgs::msg::TransformStamped object_link0_tf;
