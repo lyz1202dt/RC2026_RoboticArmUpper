@@ -176,6 +176,20 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_camera_tf")),
     )
 
+    # 相机光学坐标系静态TF（与真实机配置保持一致）
+    camera_optical_static_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=[
+            "0", "0", "0",
+            "-1.5708", "0", "-1.5708",
+            "camera_link", "camera_optical_frame"
+        ],
+        parameters=[{"use_sim_time": True}],
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("start_camera_tf")),
+    )
+
     rviz2 = Node(
         package="rviz2",
         executable="rviz2",
@@ -246,6 +260,7 @@ def generate_launch_description():
         mujoco,
         load_controller,
         camera_static_tf,
+        camera_optical_static_tf,
         move_group,
         robotic_task,
         pnp_ros_node,

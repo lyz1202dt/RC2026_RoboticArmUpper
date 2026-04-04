@@ -29,7 +29,6 @@
 #include <tf2/time.hpp>
 #include <tf2_ros/transform_listener.hpp>
 #include <thread>
-#include <iostream>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -64,11 +63,15 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
     camera_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     tf_buffer_= std::make_shared<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    box_pose_sub_ = node->create_subscription<geometry_msgs::msg::PoseStamped>(
+        "box_pose",
+        10,
+        std::bind(&ArmHandleNode::boxPoseCallback, this, std::placeholders::_1));
     
 
-    vision_timer_ = node->create_wall_timer(100ms, [this]() {
-        this->visionCallback();
-    });
+    // vision_timer_ = node->create_wall_timer(100ms, [this]() {
+    //     this->visionCallback();
+    // });
 
     object_link0_tf_buffer   = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     object_link0_tf_listener = std::make_shared<tf2_ros::TransformListener>(*object_link0_tf_buffer);
@@ -180,6 +183,16 @@ ArmHandleNode::ArmHandleNode(const rclcpp::Node::SharedPtr node) : node(node), v
 
 }
 
+void ArmHandleNode::boxPoseCallback(geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
+    if (!msg) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(vision_target_mutex_);
+    detected_target_pose_on_base_link_ = msg->pose;
+    has_vision_target_ = true;
+}
+
 
 
 
@@ -203,7 +216,7 @@ rclcpp_action::GoalResponse
     }
 
     try {
-        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
+        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_optical_frame", tf2::TimePointZero);
     } catch (const tf2::TransformException& ex) { 
         RCLCPP_WARN(node->get_logger(), "警告：相机坐标系和变换查询失败，拒绝机械臂目标请求");
         return rclcpp_action::GoalResponse::REJECT;
@@ -241,7 +254,6 @@ rclcpp_action::GoalResponse
 
 
     current_task_type = goal->action_type; // 任务类型
-    RCLCPP_INFO(node->get_logger(), "Debug1");
 
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -365,22 +377,22 @@ void ArmHandleNode::arm_catch_task_handle() {
     } while (move_group_interface->execute(plan) != moveit::core::MoveItErrorCode::SUCCESS);
 
 
-    geometry_msgs::msg::Pose experimental_pose_ ;
-    experimental_pose_.position.x = 0.560;
-    experimental_pose_.position.y = -0.000;
-    experimental_pose_.position.z = 0.500;   
-    experimental_pose_.orientation.w = 0.6561;
-    experimental_pose_.orientation.x = 0.0;
-    experimental_pose_.orientation.y = -0.7547;
-    experimental_pose_.orientation.z = 0.0;
-    move_group_interface->setPoseTarget(experimental_pose_);
-    bool success_ex = move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS;
-    if (success_ex)
-    {
-        RCLCPP_INFO(node->get_logger(), "实验位置可达");
-    } else {
-        RCLCPP_INFO(node->get_logger(), "实验位置不可达");
-    }
+    // geometry_msgs::msg::Pose experimental_pose_ ;
+    // experimental_pose_.position.x = 0.560;
+    // experimental_pose_.position.y = -0.000;
+    // experimental_pose_.position.z = 0.500;   
+    // experimental_pose_.orientation.w = 0.6561;
+    // experimental_pose_.orientation.x = 0.0;
+    // experimental_pose_.orientation.y = -0.7547;
+    // experimental_pose_.orientation.z = 0.0;
+    // move_group_interface->setPoseTarget(experimental_pose_);
+    // bool success_ex = move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS;
+    // if (success_ex)
+    // {
+    //     RCLCPP_INFO(node->get_logger(), "实验位置可达");
+    // } else {
+    //     RCLCPP_INFO(node->get_logger(), "实验位置不可达");
+    // }
 
 
 
@@ -710,7 +722,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             bool reached_interim_pose = false;
             do {
                 move_group_interface->setStartStateToCurrentState();
-                move_group_interface->setNamedTarget("kfs4_interim_2_pos");
+                move_group_interface->setNamedTarget("start_pos_1");
 
                 success = (move_group_interface->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
                 if (!success) {
@@ -755,7 +767,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             // if(success){
             //     RCLCPP_INFO(node->get_logger(), "抓取位置可达");
             // } else {
-            //     RCLCPP_INFO(node->get_logger(), "抓取位置不可打");
             // }
 
 
@@ -774,12 +785,6 @@ void ArmHandleNode::arm_catch_task_handle() {
                 // 然后将这个准备位置设置为规划目标
             move_group_interface->setStartStateToCurrentState();
             move_group_interface->setPoseTarget(prepare_pos);            // 设置目标
-
-            std::cout << "==================================================================================================" << std::endl;
-            std::cout << "[DEBUG 1] 准备位置: Pos(" <<
-                prepare_pos.position.x << "," << prepare_pos.position.y << "," << prepare_pos.position.z << "), ORI(" <<
-                prepare_pos.orientation.w << "," << prepare_pos.orientation.x << "," << prepare_pos.orientation.y << "," << prepare_pos.orientation.z << ")" << std::endl;
-            std::cout << "==================================================================================================" << std::endl;
 
 
 
@@ -872,7 +877,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             // 步骤五：删除碰撞体进行抓取
                 // getPlanningFrame 获取运动规划器的id
             // remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());   //在抓取前删除KFS防止因碰撞检测无法连接
-            // RCLCPP_INFO(node->get_logger(), "Debug-1");
 
 
 
@@ -889,7 +893,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             std::this_thread::sleep_for(50ms); // 短暂休眠，让底层控制器消化完上一条轨迹的残余指令
 
             // 等待机械臂完全静止后再启动视觉伺服，避免控制模式切换导致的突跳
-            RCLCPP_INFO(node->get_logger(), "[视觉伺服] 等待机械臂稳定后启动视觉伺服...");
             bool arm_stable = false;
             int stability_count = 0;
             const int STABILITY_THRESHOLD = 8;  // 增加连续稳定帧数要求，从 5 改为 8，确保更充分的静止
@@ -919,14 +922,6 @@ void ArmHandleNode::arm_catch_task_handle() {
                     stability_count++;
                 } else {
                     stability_count = 0; // 一旦不稳定，重新计数
-                }
-                
-                if (stability_count >= STABILITY_THRESHOLD) {
-                    arm_stable = true;
-                    RCLCPP_INFO(node->get_logger(), "[视觉伺服] 机械臂已稳定 (连续%d帧)，启动视觉伺服", stability_count);
-                } else if (stability_iter % 20 == 0) {
-                    RCLCPP_INFO(node->get_logger(), "[视觉伺服] 等待中... 稳定帧数：%d/%d, 位置误差:%.4f, 姿态误差:%.4f", 
-                        stability_count, STABILITY_THRESHOLD, position_change, orientation_change);
                 }
                 
                 last_stable_pose = current_pose;
@@ -977,8 +972,22 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             // 【保险措施 4】：定义最小有效移动距离，避免噪声引起的微动
             const double MIN_EFFECTIVE_DISTANCE = 0.0005; // 0.5mm
+            const double MAX_SERVO_DURATION_SEC = 12.0;
+            const auto servo_loop_start_time = std::chrono::steady_clock::now();
 
             while (rclcpp::ok() && distance_ > SWITCH_DISTANCE_THRESHOLD ) { // 当末端与目标的距离大于阈值时持续进行视觉伺服调整
+
+                const auto elapsed_sec = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - servo_loop_start_time
+                ).count();
+                if (elapsed_sec > MAX_SERVO_DURATION_SEC) {
+                    RCLCPP_WARN(
+                        node->get_logger(),
+                        "视觉伺服超时(%.1fs)，提前退出并回退到MoveIt流程",
+                        elapsed_sec
+                    );
+                    break;
+                }
 
                 RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "视觉伺服调整中，距离目标：%.3f", distance_);
                 
@@ -1014,13 +1023,6 @@ void ArmHandleNode::arm_catch_task_handle() {
 
                 // 【保险措施 5】：在计算单点轨迹前，检查位移量是否过小，若是则跳过本次控制输出
                 double step_distance = (final_desired_position_eigen - current_pose_eigen).norm();
-                if (step_distance < MIN_EFFECTIVE_DISTANCE) {
-                    RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000, "目标位移过小 (%.4f m)，跳过本次控制以防抖动", step_distance);
-                    loop_rate.sleep();
-                    current_pose = current_pose_now; // 更新当前位姿用于下次判断
-                    distance_ = calculate_distance_to_target(current_pose);
-                    continue;
-                }
 
                 const std::vector<double> current_joint_values = move_group_interface->getCurrentJointValues();
                 visual_servoing_handler_.updateExternalJointSeed(current_joint_values);
@@ -1117,7 +1119,6 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
             // move_group_interface->execute(plan);
-            // RCLCPP_INFO(node->get_logger(), "执行抓取");
             // move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
             // move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
 
@@ -1165,7 +1166,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             // double fraction = 0.0; // move_group_interface->computeCartesianPath(way_points, 0.01, 0.0, cart_trajectory,false);
             // count = 0;
 
-            // // RCLCPP_INFO(node->get_logger(), "Debug-2");
             // move_group_interface->setMaxAccelerationScalingFactor(0.07);
             // move_group_interface->setMaxVelocityScalingFactor(0.1);
 
@@ -1188,7 +1188,6 @@ void ArmHandleNode::arm_catch_task_handle() {
             //     //     move_group_interface->getRobotModel(), 
             //     //     move_group_interface->getName()
             //     // ));
-            //     RCLCPP_INFO(node->get_logger(), "从准备位置到抓取位置的笛卡尔路径规划成功");
             // }
 
             // // 步骤八：笛卡尔规划失败处理
@@ -1210,19 +1209,16 @@ void ArmHandleNode::arm_catch_task_handle() {
             std::vector<std::string> node_names = node->get_node_names();
             // if(std::find(node_names.begin(), node_names.end(), "/driver_node") != node_names.end()){
             //     set_air_pump(true);
-            //     RCLCPP_INFO(node->get_logger(), "启动气泵成功");
             // } else {
             //     RCLCPP_WARN(node->get_logger(),"没有driver_node节点,不能启动气泵");
             // }
 
             // // 步骤九：执行笛卡尔路径并发布反馈
-            // // RCLCPP_INFO(node->get_logger(), "Debug-3");
 
             // // // 将笛卡尔轨迹的时间拉长，以放慢从准备位姿到抓取位姿的执行速度
             // // // slow_down_factor > 1.0 会将轨迹总时间放大相应倍数，同时按比例缩小速度/加速度
             // // const double slow_down_factor = 3.0; // 倍速缩放因子（2.0 表示执行时间变为原来两倍）
             // // if (slow_down_factor > 1.0) {
-            // //     RCLCPP_INFO(node->get_logger(), "放慢笛卡尔轨迹: slow_down_factor=%.2f", slow_down_factor);
             // //     for (auto &point : cart_trajectory.joint_trajectory.points) {
             // //         // joint_trajectory.points 存储的是一系列带有时间戳的路径点序列，每个点包含该时刻的关节位置、速度和加速度信息。
             // //         // 缩放 time_from_start
@@ -1255,11 +1251,7 @@ void ArmHandleNode::arm_catch_task_handle() {
             // // 记录结束时间
             // auto end_time = std::chrono::high_resolution_clock::now();
             // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-            // RCLCPP_INFO(node->get_logger(), "笛卡尔路径执行完成，实际耗时: %ld 毫秒", duration.count());
 
-
-
-            // RCLCPP_INFO(node->get_logger(), "执行从准备位置到抓取位置的笛卡尔路径");
             // feedback_msg->current_state  = 2;
             // feedback_msg->state_describe = "机械臂到达吸取位置";
             // current_goal_handle->publish_feedback(feedback_msg);
@@ -1276,11 +1268,9 @@ void ArmHandleNode::arm_catch_task_handle() {
 
             move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);
             move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);
-            // RCLCPP_INFO(node->get_logger(), "Debug-4");
             // 步骤十：等待气泵稳定
                 // 调用 sleep_for 让线程休眠 2 秒
             // std::this_thread::sleep_for(2s);
-            // RCLCPP_INFO(node->get_logger(), "Debug-5");
             
 
             // 使用一个参数服务来启动气泵
@@ -1291,13 +1281,11 @@ void ArmHandleNode::arm_catch_task_handle() {
             // else {
             //     param_client->set_parameters({rclcpp::Parameter("enable_air_pump", true)});
             // }
-            // RCLCPP_INFO(node->get_logger(), "Debug-6");
 
             // 步骤十一：发布吸附启动反馈
             feedback_msg->current_state  = 3;
             feedback_msg->state_describe = "启动气泵吸取KFS";
             current_goal_handle->publish_feedback(feedback_msg);
-            // RCLCPP_INFO(node->get_logger(), "Debug-7");
 
             // 步骤十二：添加附着碰撞体
                 // 调用 add_attached_kfs_collision 函数将已吸附的 KFS 添加为机械臂末端的附着碰撞体
@@ -1720,79 +1708,77 @@ void ArmHandleNode::arm_catch_task_handle() {
 
 
 
-void ArmHandleNode::visionCallback() {
-    if (!rclcpp::ok()) {
-        return;
-    }
+// void ArmHandleNode::visionCallback() {
+//     if (!rclcpp::ok()) {
+//         return;
+//     }
 
-    // if (!msg) {
-    //     RCLCPP_WARN(node->get_logger(), "警告：接收到空的视觉消息");
-    //     return;
-    // }
+//     // if (!msg) {
+//     //     RCLCPP_WARN(node->get_logger(), "警告：接收到空的视觉消息");
+//     //     return;
+//     // }
 
-    // // 约定：x == 10008342.00 表示视觉消息无效，回退为最近一次可用目标
-    // if (msg->pose.position.x == 10008342.00) {
-    //     std::lock_guard<std::mutex> lock(vision_target_mutex_);
-    //     detected_target_pose_on_base_link_ = available_target_pose_;
-    //     has_vision_target_ = true;
-    //     RCLCPP_WARN_THROTTLE(
-    //         node->get_logger(),
-    //         *node->get_clock(),
-    //         2000,
-    //         "警告：视觉消息无效（x=10008342.00），回退到可用目标"
-    //     );
-    //     return;
-    // }
+//     // // 约定：x == 10008342.00 表示视觉消息无效，回退为最近一次可用目标
+//     // if (msg->pose.position.x == 10008342.00) {
+//     //     std::lock_guard<std::mutex> lock(vision_target_mutex_);
+//     //     detected_target_pose_on_base_link_ = available_target_pose_;
+//     //     has_vision_target_ = true;
+//     //     RCLCPP_WARN_THROTTLE(
+//     //         node->get_logger(),
+//     //         *node->get_clock(),
+//     //         2000,
+//     //         "警告：视觉消息无效（x=10008342.00），回退到可用目标"
+//     //     );
+//     //     return;
+//     // }
 
-    // geometry_msgs::msg::Pose pose_in_camera = msg->pose;
+//     // geometry_msgs::msg::Pose pose_in_camera = msg->pose;
 
-    // // 锁外做TF，避免阻塞读线程
-    // geometry_msgs::msg::Pose transformed_pose;
-    // try {
-    //     // 若消息时间戳无效，则退化为当前时刻
-    //     rclcpp::Time query_stamp = msg->header.stamp;
-    //     if (query_stamp.nanoseconds() == 0) {
-    //         query_stamp = node->now();
-    //     }
+//     // // 锁外做TF，避免阻塞读线程
+//     // geometry_msgs::msg::Pose transformed_pose;
+//     // try {
+//     //     // 若消息时间戳无效，则退化为当前时刻
+//     //     rclcpp::Time query_stamp = msg->header.stamp;
+//     //     if (query_stamp.nanoseconds() == 0) {
+//     //         query_stamp = node->now();
+//     //     }
 
-    //     auto tf = camera_link0_tf_buffer->lookupTransform(
-    //         "base_link",
-    //         "camera_link",
-    //         query_stamp,
-    //         tf2::durationFromSec(0.02)
-    //     );
+//     //     auto tf = camera_link0_tf_buffer->lookupTransform(
+//     //         "base_link",
+//     //         "camera_link",
+//     //         query_stamp,
+//     //         tf2::durationFromSec(0.02)
+//     //     );
 
-    //     tf2::doTransform(pose_in_camera, transformed_pose, tf);
-    // } catch (const tf2::TransformException &ex) {
-    //     RCLCPP_WARN(node->get_logger(), "警告：TF变换失败: %s", ex.what());
-    //     return;
-    // }
-
-
-    geometry_msgs::msg::PoseStamped transformed_pose_;
-    geometry_msgs::msg::TransformStamped transform;
-    try {
-        transform = tf_buffer_->lookupTransform(
-            "base_link",
-            "object_frame",
-            tf2::TimePointZero
-        );
-    } catch (const tf2::TransformException &ex) {
-        RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "警告：状态机查询TF失败: %s", ex.what());
-        return;
-    }
-
-    transformed_pose_.header.frame_id = "base_link";
-    transformed_pose_.header.stamp = transform.header.stamp;
-    transformed_pose_.pose.position.x = transform.transform.translation.x;
-    transformed_pose_.pose.position.y = transform.transform.translation.y;
-    transformed_pose_.pose.position.z = transform.transform.translation.z;
-    transformed_pose_.pose.orientation.x = transform.transform.rotation.x;
-    transformed_pose_.pose.orientation.y = transform.transform.rotation.y;
-    transformed_pose_.pose.orientation.z = transform.transform.rotation.z;
-    transformed_pose_.pose.orientation.w = transform.transform.rotation.w;
+//     //     tf2::doTransform(pose_in_camera, transformed_pose, tf);
+//     // } catch (const tf2::TransformException &ex) {
+//     //     RCLCPP_WARN(node->get_logger(), "警告：TF变换失败: %s", ex.what());
+//     //     return;
+//     // }
 
 
+//     geometry_msgs::msg::PoseStamped transformed_pose_;
+//     geometry_msgs::msg::TransformStamped transform;
+//     try {
+//         transform = tf_buffer_->lookupTransform(
+//             "base_link",
+//             "object_frame",
+//             tf2::TimePointZero
+//         );
+//     } catch (const tf2::TransformException &ex) {
+//         RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 3000, "警告：状态机查询TF失败: %s", ex.what());
+//         return;
+//     }
+
+//     transformed_pose_.header.frame_id = "base_link";
+//     transformed_pose_.header.stamp = transform.header.stamp;
+//     transformed_pose_.pose.position.x = transform.transform.translation.x;
+//     transformed_pose_.pose.position.y = transform.transform.translation.y;
+//     transformed_pose_.pose.position.z = transform.transform.translation.z;
+//     transformed_pose_.pose.orientation.x = transform.transform.rotation.x;
+//     transformed_pose_.pose.orientation.y = transform.transform.rotation.y;
+//     transformed_pose_.pose.orientation.z = transform.transform.rotation.z;
+//     transformed_pose_.pose.orientation.w = transform.transform.rotation.w;
 
 
 
@@ -1801,45 +1787,46 @@ void ArmHandleNode::visionCallback() {
 
 
 
-    // 四元数归一化（防止非单位四元数）
-    tf2::Quaternion q(
-        transformed_pose_.pose.orientation.x,
-        transformed_pose_.pose.orientation.y,
-        transformed_pose_.pose.orientation.z,
-        transformed_pose_.pose.orientation.w
-    );
 
-    if (q.length2() > 1e-12) {
-        q.normalize();
-        transformed_pose_.pose.orientation.x = q.x();
-        transformed_pose_.pose.orientation.y = q.y();
-        transformed_pose_.pose.orientation.z = q.z();
-        transformed_pose_.pose.orientation.w = q.w();
-    }
 
-    // 第二段短锁：一次性发布共享结果
-    {
-        std::lock_guard<std::mutex> lock(vision_target_mutex_);
-        // detected_target_pose_ = pose_in_camera;
-        detected_target_pose_on_base_link_ = transformed_pose_.pose;
-        available_target_pose_ = transformed_pose_.pose; 
-        has_vision_target_ = true;
-    }
+//     // 四元数归一化（防止非单位四元数）
+//     tf2::Quaternion q(
+//         transformed_pose_.pose.orientation.x,
+//         transformed_pose_.pose.orientation.y,
+//         transformed_pose_.pose.orientation.z,
+//         transformed_pose_.pose.orientation.w
+//     );
+
+//     if (q.length2() > 1e-12) {
+//         q.normalize();
+//         transformed_pose_.pose.orientation.x = q.x();
+//         transformed_pose_.pose.orientation.y = q.y();
+//         transformed_pose_.pose.orientation.z = q.z();
+//         transformed_pose_.pose.orientation.w = q.w();
+//     }
+
+//     // 第二段短锁：一次性发布共享结果
+//     {
+//         std::lock_guard<std::mutex> lock(vision_target_mutex_);
+//         // detected_target_pose_ = pose_in_camera;
+//         detected_target_pose_on_base_link_ = transformed_pose_.pose;
+//         has_vision_target_ = true;
+//     }
     
-    RCLCPP_INFO_THROTTLE(
-        node->get_logger(),
-        *node->get_clock(),
-        5000,
-        "视觉目标更新(base_link): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
-        transformed_pose_.pose.position.x,
-        transformed_pose_.pose.position.y,
-        transformed_pose_.pose.position.z,
-        transformed_pose_.pose.orientation.w,
-        transformed_pose_.pose.orientation.x,
-        transformed_pose_.pose.orientation.y,
-        transformed_pose_.pose.orientation.z
-    );
-}
+//     RCLCPP_INFO_THROTTLE(
+//         node->get_logger(),
+//         *node->get_clock(),
+//         5000,
+//         "状态机TF读取(base_link<-object_frame): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
+//         transformed_pose_.pose.position.x,
+//         transformed_pose_.pose.position.y,
+//         transformed_pose_.pose.position.z,
+//         transformed_pose_.pose.orientation.w,
+//         transformed_pose_.pose.orientation.x,
+//         transformed_pose_.pose.orientation.y,
+//         transformed_pose_.pose.orientation.z
+//     );
+// }
 
 
 

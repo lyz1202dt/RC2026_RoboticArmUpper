@@ -126,19 +126,11 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     grasp_pose.orientation.y = -0.6759;
     grasp_pose.orientation.z = 0.0;
 
-    // RCLCPP_INFO_THROTTLE(
-    //     node->get_logger(),
-    //     *node->get_clock(),
-    //     1000,
-    //     "calculate_prepare_pos: box_center=(%.3f, %.3f, %.3f), side_center=(%.3f, %.3f, %.3f)",
-    //     center.x(), center.y(), center.z(),
-    //     side_center.x(), side_center.y(), side_center.z()
-    // );
     RCLCPP_INFO_THROTTLE(
         node->get_logger(),
         *node->get_clock(),
         1000,
-        "calculate_prepare_pos: grasp=(%.3f, %.3f, %.3f), quat=(w:%.4f,x:%.4f,y:%.4f,z:%.4f)",
+        "计算出的grasp_pose: Position: (%.3f, %.3f, %.3f), Orientation: (w:%.4f,x:%.4f,y:%.4f,z:%.4f)",
         grasp_pos_vec.x(), grasp_pos_vec.y(), grasp_pos_vec.z(),
         grasp_pose.orientation.w,
         grasp_pose.orientation.x,
@@ -146,12 +138,12 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
         grasp_pose.orientation.z
     );
 
-    RCLCPP_INFO_THROTTLE(
-        node->get_logger(),
-        *node->get_clock(),
-        1000,
-        "calculate_prepare_pos: 严格按plan固定预抓取距离5cm、抓取进入3.5cm"
-    );
+    // RCLCPP_INFO_THROTTLE(
+    //     node->get_logger(),
+    //     *node->get_clock(),
+    //     1000,
+    //     "calculate_prepare_pos: 严格按plan固定预抓取距离5cm、抓取进入3.5cm"
+    // );
 
     return prepare_pose;
 }
@@ -456,10 +448,8 @@ bool ArmHandleNode::planLongPathSegmented(
 
     
     if(fraction < 0.995f){
-        RCLCPP_ERROR(node->get_logger(), "分段规划失败");
         return false ;
     } else {
-        RCLCPP_INFO(node->get_logger(), "分段规划成功");
         return true;
     }
 

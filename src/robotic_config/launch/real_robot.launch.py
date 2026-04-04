@@ -23,8 +23,7 @@ def generate_launch_description():
             arguments=["--ros-args", "--log-level", "warn"],
             parameters=[{
                 "use_sim_time": False
-            }]
-        )
+            }])
     
 
     static_tf = Node(
@@ -32,10 +31,18 @@ def generate_launch_description():
     executable='static_transform_publisher',
     arguments=[
         '0.01', '0.01', '0',
-        '0', '0', '0',
+        '0', '-1.5708', '0',
         'link5', 'camera_link'
-    ]
-)
+    ])
+
+    static_tf_2 = Node(
+    package='tf2_ros',
+    executable='static_transform_publisher',
+    arguments=[
+        '0', '0', '0',
+        '-1.5708', '0', '-1.5708',
+        'camera_link', 'camera_optical_frame'
+    ])
 
 
     #选择启动Moveit Setup Assistant生成的launch文件
