@@ -61,9 +61,11 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         arguments=[
-            '0.01', '0.01', '0',
-            '0', '0', '0',
-            'link5', 'camera_link'
+            "0.1", "0.09", "-0.03",
+            "0.0", "0.7071068", "0.0", "0.7071068",
+            "link4",
+            
+            "camera_link"
         ]
     )
 
@@ -72,7 +74,7 @@ def generate_launch_description():
         executable='static_transform_publisher',
         arguments=[
             '0', '0', '0',
-            '-1.5708', '0', '-1.5708',
+            '0', '0', '0',
             'camera_link', 'camera_optical_frame'
         ]
     )
@@ -95,23 +97,23 @@ def generate_launch_description():
     )
 
     # Start PnP after robotic_task is ready.
-    start_pnp = TimerAction(
-        period=6.0,
-        actions=[
-            Node(
-                package='pnp_ros',
-                executable='pnp_ros_node',
-                name='pnp_ros_node',
-                output='screen',
-                parameters=[{
-                    'use_sim_time': False,
-                    'camera_source': LaunchConfiguration('camera_source'),
-                    'sim_image_topic': LaunchConfiguration('sim_image_topic'),
-                    'real_video_device_id': LaunchConfiguration('real_video_device_id'),
-                }],
-            )
-        ]
-    )
+    # start_pnp = TimerAction(
+    #     period=6.0,
+    #     actions=[
+    #         Node(
+    #             package='pnp_ros',
+    #             executable='pnp_ros_node',
+    #             name='pnp_ros_node',
+    #             output='screen',
+    #             parameters=[{
+    #                 'use_sim_time': False,
+    #                 'camera_source': LaunchConfiguration('camera_source'),
+    #                 'sim_image_topic': LaunchConfiguration('sim_image_topic'),
+    #                 'real_video_device_id': LaunchConfiguration('real_video_device_id'),
+    #             }],
+    #         )
+    #     ]
+    # )
 
     return LaunchDescription([
         camera_source_arg,

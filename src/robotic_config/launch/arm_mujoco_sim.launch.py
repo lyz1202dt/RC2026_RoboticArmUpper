@@ -86,14 +86,14 @@ def generate_launch_description():
 
     sim_bias_x_m_arg = DeclareLaunchArgument(
         "sim_bias_x_m",
-        default_value="0.0",
-        description="Simulation-only x bias compensation added to /box_pose in base_link",
+        default_value="-0.182",
+        description="Simulation-only x bias compensation added to /box_pose in base_link (negative pulls x down)",
     )
 
     sim_bias_y_m_arg = DeclareLaunchArgument(
         "sim_bias_y_m",
-        default_value="0.0",
-        description="Simulation-only y bias compensation added to /box_pose in base_link",
+        default_value="0.279",
+        description="Simulation-only y bias compensation added to /box_pose in base_link (positive lifts y up)",
     )
 
     pnp_camera_frame_arg = DeclareLaunchArgument(
@@ -245,6 +245,19 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_camera_tf")),
     )
 
+    aruco_marker = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=[
+            "0.5", "0", "0.0015",
+            "0", "0", "0",
+            "base_link", "aruco_marker_frame"
+        ],
+        parameters=[{"use_sim_time": True}],
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("start_camera_tf")),
+    )
+
     rviz2 = Node(
         package="rviz2",
         executable="rviz2",
@@ -275,18 +288,18 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_move_group")),
     )
 
-    robotic_task = Node(
-        package="robotic_task",
-        executable="robotic_task",
-        output="screen",
-        parameters=[
-            {"robot_description": robot_desc},
-            moveit_config.robot_description_semantic,
-            {"use_sim_time": True},
-        ],
-        remappings=[("/joint_states", arm_joint_states_topic)],
-        condition=IfCondition(LaunchConfiguration("start_robotic_task")),
-    )
+    # robotic_task = Node(
+    #     package="robotic_task",
+    #     executable="robotic_task",
+    #     output="screen",
+    #     parameters=[
+    #         {"robot_description": robot_desc},
+    #         moveit_config.robot_description_semantic,
+    #         {"use_sim_time": True},
+    #     ],
+    #     remappings=[("/joint_states", arm_joint_states_topic)],
+    #     condition=IfCondition(LaunchConfiguration("start_robotic_task")),
+    # )
 
     load_controller = RegisterEventHandler(
         OnProcessStart(
@@ -324,7 +337,7 @@ def generate_launch_description():
         camera_static_tf,
         camera_optical_static_tf,
         move_group,
-        robotic_task,
+        # robotic_task,
         pnp_ros_node,
         arm_calc,
         rviz2,

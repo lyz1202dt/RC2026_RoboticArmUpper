@@ -14,6 +14,7 @@ find_package(ament_cmake REQUIRED)
 install(DIRECTORY urdf DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY model DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY meshes/ DESTINATION share/${PROJECT_NAME}/meshes)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../aruco_marker_100.png DESTINATION .)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

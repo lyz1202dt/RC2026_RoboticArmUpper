@@ -5,3 +5,7 @@
 /.cache/
 *.ikcache
 .clangd
+/ArUco_build/
+/MuJoCo/
+/error_solving/
+

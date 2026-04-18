@@ -109,10 +109,89 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos(
     // 靠近机器人的侧面中心点。
     const Eigen::Vector3d side_center = center; // - inward_dir * kHalfSize;
 
-    // 预抓取：表面外；抓取：表面内。
-    const Eigen::Vector3d prepare_pos_vec = side_center - inward_dir * kPrepareDistance;
-    const Eigen::Vector3d grasp_pos_vec = side_center + inward_dir * kGraspInsideDistance;
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // 预抓取：表面外；抓取：表面内。
+    Eigen::Vector3d prepare_pos_vec = side_center - inward_dir * kPrepareDistance;
+    Eigen::Vector3d grasp_pos_vec = side_center + inward_dir * kGraspInsideDistance;
+
+    // 用户指定：最终抓取点收敛到 x=0.700, y=0.000。
+    grasp_pos_vec.x() = 0.700;
+    grasp_pos_vec.y() = 0.000;
+    // 保持与抓取点一致的进给方向与距离关系，避免预抓点和抓取点失配。
+    prepare_pos_vec = grasp_pos_vec - inward_dir * (kPrepareDistance + kGraspInsideDistance);
+
+
+
+
+
+    /*
+    x:0.700 y:0.000 z:0.250
+    w:1 x:0 y:0 z:0
+    */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
     // 固定侧抓姿态：末端朝向水平并垂直于物块侧面。
     tf2::Quaternion q;
     q.setRPY(0.0, M_PI_2, 0.0);
