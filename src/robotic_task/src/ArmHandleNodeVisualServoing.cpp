@@ -34,13 +34,13 @@ VisualServoingArmHandleNode::VisualServoingArmHandleNode(const rclcpp::Node::Sha
         "visual_servo.joint_state_timeout_sec", joint_state_timeout_sec_);
     external_seed_timeout_sec_ = node_->declare_parameter<double>(
         "visual_servo.external_seed_timeout_sec", external_seed_timeout_sec_);
-    RCLCPP_INFO(
-        node_->get_logger(),
-        "视觉伺服IK阈值: trans=%.6f m, rot=%.6f rad (relaxed=%.6f rad, fail_relax_after=%d)",
-        ik_position_tolerance_m_,
-        ik_orientation_tolerance_rad_,
-        ik_orientation_tolerance_relaxed_rad_,
-        ik_fail_relax_after_n_);
+    // RCLCPP_INFO(
+    //     node_->get_logger(),
+    //     "视觉伺服IK阈值: trans=%.6f m, rot=%.6f rad (relaxed=%.6f rad, fail_relax_after=%d)",
+    //     ik_position_tolerance_m_,
+    //     ik_orientation_tolerance_rad_,
+    //     ik_orientation_tolerance_relaxed_rad_,
+    //     ik_fail_relax_after_n_);
     
     // 订阅关节状态
     joint_state_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
@@ -70,16 +70,16 @@ void VisualServoingArmHandleNode::resetServoState(
     servo_state_initialized_ = true;
     is_first_iteration_ = false;
 
-    RCLCPP_INFO(
-        node_->get_logger(),
-        "重置视觉伺服状态: actual_pos=(%.4f, %.4f, %.4f), target_pos=(%.4f, %.4f, %.4f)",
-        actual_position.pose.position.x,
-        actual_position.pose.position.y,
-        actual_position.pose.position.z,
-        final_desired_position.pose.position.x,
-        final_desired_position.pose.position.y,
-        final_desired_position.pose.position.z
-    );
+    // RCLCPP_INFO(
+    //     node_->get_logger(),
+    //     "重置视觉伺服状态: actual_pos=(%.4f, %.4f, %.4f), target_pos=(%.4f, %.4f, %.4f)",
+    //     actual_position.pose.position.x,
+    //     actual_position.pose.position.y,
+    //     actual_position.pose.position.z,
+    //     final_desired_position.pose.position.x,
+    //     final_desired_position.pose.position.y,
+    //     final_desired_position.pose.position.z
+    // );
 }
 
 bool VisualServoingArmHandleNode::initKDL() {
@@ -126,7 +126,7 @@ bool VisualServoingArmHandleNode::initKDL() {
     // 创建雅可比求解器
     jacobian_solver_ = std::make_shared<KDL::ChainJntToJacSolver>(kdl_chain_);
     
-    RCLCPP_INFO(node_->get_logger(), "KDL初始化成功，关节数: %d", nj);
+    // RCLCPP_INFO(node_->get_logger(), "KDL初始化成功，关节数: %d", nj);
     return true;
 }
 
@@ -534,16 +534,16 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
         initial_trajectory_point_.acceleration.angular.z = 0.0;
         initial_trajectory_point_.timestamp = node_->now();
 
-        RCLCPP_INFO(
-            node_->get_logger(),
-            "ComputationalSpeed init: actual_pos=(%.4f, %.4f, %.4f), target_pos=(%.4f, %.4f, %.4f)",
-            actual_position_.pose.position.x,
-            actual_position_.pose.position.y,
-            actual_position_.pose.position.z,
-            final_desired_position_.pose.position.x,
-            final_desired_position_.pose.position.y,
-            final_desired_position_.pose.position.z
-        );
+        // RCLCPP_INFO(
+        //     node_->get_logger(),
+        //     "ComputationalSpeed init: actual_pos=(%.4f, %.4f, %.4f), target_pos=(%.4f, %.4f, %.4f)",
+        //     actual_position_.pose.position.x,
+        //     actual_position_.pose.position.y,
+        //     actual_position_.pose.position.z,
+        //     final_desired_position_.pose.position.x,
+        //     final_desired_position_.pose.position.y,
+        //     final_desired_position_.pose.position.z
+        // );
     }
 
     // 计算当前期望速度
@@ -551,45 +551,45 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     current_desired_velocity_.linear.y = (final_desired_position_.pose.position.y - crrent_desired_position_.pose.position.y) * kp_;
     current_desired_velocity_.linear.z = (final_desired_position_.pose.position.z - crrent_desired_position_.pose.position.z) * kp_;
 
-    tf2::Quaternion final_quaternion(
-        final_desired_position_.pose.orientation.x,
-        final_desired_position_.pose.orientation.y,
-        final_desired_position_.pose.orientation.z,
-        final_desired_position_.pose.orientation.w
-    );
-    tf2::Quaternion current_quaternion(
-        crrent_desired_position_.pose.orientation.x,
-        crrent_desired_position_.pose.orientation.y,
-        crrent_desired_position_.pose.orientation.z,
-        crrent_desired_position_.pose.orientation.w
-    );
-    final_quaternion.normalize();
-    current_quaternion.normalize();
-    double roll, pitch, yaw, final_roll, final_pitch, final_yaw;
-    tf2::Matrix3x3(final_quaternion).getRPY(final_roll, final_pitch, final_yaw);
-    tf2::Matrix3x3(current_quaternion).getRPY(roll, pitch, yaw);
-    current_desired_velocity_.angular.x = (final_roll - roll) * kp_;
-    current_desired_velocity_.angular.y = (final_pitch - pitch) * kp_;
-    current_desired_velocity_.angular.z = (final_yaw - yaw) * kp_;
+    // tf2::Quaternion final_quaternion(
+    //     final_desired_position_.pose.orientation.x,
+    //     final_desired_position_.pose.orientation.y,
+    //     final_desired_position_.pose.orientation.z,
+    //     final_desired_position_.pose.orientation.w
+    // );
+    // tf2::Quaternion current_quaternion(
+    //     crrent_desired_position_.pose.orientation.x,
+    //     crrent_desired_position_.pose.orientation.y,
+    //     crrent_desired_position_.pose.orientation.z,
+    //     crrent_desired_position_.pose.orientation.w
+    // );
+    // final_quaternion.normalize();
+    // current_quaternion.normalize();
+    // double roll, pitch, yaw, final_roll, final_pitch, final_yaw;
+    // tf2::Matrix3x3(final_quaternion).getRPY(final_roll, final_pitch, final_yaw);
+    // tf2::Matrix3x3(current_quaternion).getRPY(roll, pitch, yaw);
+    // current_desired_velocity_.angular.x = (final_roll - roll) * kp_;
+    // current_desired_velocity_.angular.y = (final_pitch - pitch) * kp_;
+    // current_desired_velocity_.angular.z = (final_yaw - yaw) * kp_;
 
-    double relative_angle = std::acos(std::clamp(final_quaternion.dot(current_quaternion), -1.0, 1.0)) * 2.0;
+    // double relative_angle = std::acos(std::clamp(final_quaternion.dot(current_quaternion), -1.0, 1.0)) * 2.0;
 
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(),
-        *node_->get_clock(),
-        1000,
-        "PoseErr: dpos=(%.5f, %.5f, %.5f), drot=(%.5f, %.5f, %.5f), angle=%.5f",
-        final_desired_position_.pose.position.x - crrent_desired_position_.pose.position.x,
-        final_desired_position_.pose.position.y - crrent_desired_position_.pose.position.y,
-        final_desired_position_.pose.position.z - crrent_desired_position_.pose.position.z,
-        current_desired_velocity_.angular.x,
-        current_desired_velocity_.angular.y,
-        current_desired_velocity_.angular.z,
-        relative_angle
-    );
+    // RCLCPP_INFO_THROTTLE(
+    //     node_->get_logger(),
+    //     *node_->get_clock(),
+    //     1000,
+    //     "PoseErr: dpos=(%.5f, %.5f, %.5f), drot=(%.5f, %.5f, %.5f), angle=%.5f",
+    //     final_desired_position_.pose.position.x - crrent_desired_position_.pose.position.x,
+    //     final_desired_position_.pose.position.y - crrent_desired_position_.pose.position.y,
+    //     final_desired_position_.pose.position.z - crrent_desired_position_.pose.position.z,
+    //     current_desired_velocity_.angular.x,
+    //     current_desired_velocity_.angular.y,
+    //     current_desired_velocity_.angular.z,
+    //     relative_angle
+    // );
     
 
-    double max_acceleration_ = 0.08; // 最大加速度 (单位: m/s^2 或 rad/s^2)
+    double max_acceleration_ = 0.001; // 最大加速度 (单位: m/s^2 或 rad/s^2)
 
     // 计算当前期望加速度
     geometry_msgs::msg::Twist current_desired_acceleration;
@@ -597,92 +597,95 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     current_desired_acceleration.linear.x = (current_desired_velocity_.linear.x - last_desired_velocity_.linear.x) / dt_;
     current_desired_acceleration.linear.y = (current_desired_velocity_.linear.y - last_desired_velocity_.linear.y) / dt_;
     current_desired_acceleration.linear.z = (current_desired_velocity_.linear.z - last_desired_velocity_.linear.z) / dt_;
-    current_desired_acceleration.angular.x = (current_desired_velocity_.angular.x - last_desired_velocity_.angular.x) / dt_;
-    current_desired_acceleration.angular.y = (current_desired_velocity_.angular.y - last_desired_velocity_.angular.y) / dt_;
-    current_desired_acceleration.angular.z = (current_desired_velocity_.angular.z - last_desired_velocity_.angular.z) / dt_;
+    // current_desired_acceleration.angular.x = (current_desired_velocity_.angular.x - last_desired_velocity_.angular.x) / dt_;
+    // current_desired_acceleration.angular.y = (current_desired_velocity_.angular.y - last_desired_velocity_.angular.y) / dt_;
+    // current_desired_acceleration.angular.z = (current_desired_velocity_.angular.z - last_desired_velocity_.angular.z) / dt_;
 
     double acc_x = std::clamp(current_desired_acceleration.linear.x, -max_acceleration_, max_acceleration_);
     double acc_y = std::clamp(current_desired_acceleration.linear.y, -max_acceleration_, max_acceleration_);
     double acc_z = std::clamp(current_desired_acceleration.linear.z, -max_acceleration_, max_acceleration_);
-    double acc_angular_x = std::clamp(current_desired_acceleration.angular.x, -max_acceleration_, max_acceleration_);
-    double acc_angular_y = std::clamp(current_desired_acceleration.angular.y, -max_acceleration_, max_acceleration_);
-    double acc_angular_z = std::clamp(current_desired_acceleration.angular.z, -max_acceleration_, max_acceleration_);
+    // double acc_angular_x = std::clamp(current_desired_acceleration.angular.x, -max_acceleration_, max_acceleration_);
+    // double acc_angular_y = std::clamp(current_desired_acceleration.angular.y, -max_acceleration_, max_acceleration_);
+    // double acc_angular_z = std::clamp(current_desired_acceleration.angular.z, -max_acceleration_, max_acceleration_);
     current_desired_acceleration.linear.x = acc_x;
     current_desired_acceleration.linear.y = acc_y;
     current_desired_acceleration.linear.z = acc_z;
-    current_desired_acceleration.angular.x = acc_angular_x;
-    current_desired_acceleration.angular.y = acc_angular_y;
-    current_desired_acceleration.angular.z = acc_angular_z;
+    // current_desired_acceleration.angular.x = acc_angular_x;
+    // current_desired_acceleration.angular.y = acc_angular_y;
+    // current_desired_acceleration.angular.z = acc_angular_z;
 
     // 更新当前期望速度
     current_desired_velocity_.linear.x = last_desired_velocity_.linear.x + current_desired_acceleration.linear.x * dt_;
     current_desired_velocity_.linear.y = last_desired_velocity_.linear.y + current_desired_acceleration.linear.y * dt_;
     current_desired_velocity_.linear.z = last_desired_velocity_.linear.z + current_desired_acceleration.linear.z * dt_;
-    current_desired_velocity_.angular.x = last_desired_velocity_.angular.x + current_desired_acceleration.angular.x * dt_;
-    current_desired_velocity_.angular.y = last_desired_velocity_.angular.y + current_desired_acceleration.angular.y * dt_;
-    current_desired_velocity_.angular.z = last_desired_velocity_.angular.z + current_desired_acceleration.angular.z * dt_;
+    // current_desired_velocity_.angular.x = last_desired_velocity_.angular.x + current_desired_acceleration.angular.x * dt_;
+    // current_desired_velocity_.angular.y = last_desired_velocity_.angular.y + current_desired_acceleration.angular.y * dt_;
+    // current_desired_velocity_.angular.z = last_desired_velocity_.angular.z + current_desired_acceleration.angular.z * dt_;
 
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(),
-        *node_->get_clock(),
-        1000,
-        "DesiredVel: linear=(%.5f, %.5f, %.5f), angular=(%.5f, %.5f, %.5f)",
-        current_desired_velocity_.linear.x,
-        current_desired_velocity_.linear.y,
-        current_desired_velocity_.linear.z,
-        current_desired_velocity_.angular.x,
-        current_desired_velocity_.angular.y,
-        current_desired_velocity_.angular.z
-    );
+    // RCLCPP_INFO_THROTTLE(
+    //     node_->get_logger(),
+    //     *node_->get_clock(),
+    //     1000,
+    //     "DesiredVel: linear=(%.5f, %.5f, %.5f), angular=(%.5f, %.5f, %.5f)",
+    //     current_desired_velocity_.linear.x,
+    //     current_desired_velocity_.linear.y,
+    //     current_desired_velocity_.linear.z,
+    //     current_desired_velocity_.angular.x,
+    //     current_desired_velocity_.angular.y,
+    //     current_desired_velocity_.angular.z
+    // );
 
     // 更新当前期望位置
     crrent_desired_position_.pose.position.x += current_desired_velocity_.linear.x * dt_;
     crrent_desired_position_.pose.position.y += current_desired_velocity_.linear.y * dt_;
     crrent_desired_position_.pose.position.z += current_desired_velocity_.linear.z * dt_;
+
+    crrent_desired_position_.pose.orientation=final_desired_position_.pose.orientation; // 直接设置为最终期望姿态，避免积分误差导致的漂移
+    RCLCPP_INFO(node_->get_logger(),"posture=(%lf,%lf,%lf,%lf)",final_desired_position_.pose.orientation.w,final_desired_position_.pose.orientation.x,final_desired_position_.pose.orientation.y,final_desired_position_.pose.orientation.z);
     // 用四元数乘法积分角速度，避免直接叠加四元数分量导致姿态漂移。
-    tf2::Quaternion desired_q(
-        crrent_desired_position_.pose.orientation.x,
-        crrent_desired_position_.pose.orientation.y,
-        crrent_desired_position_.pose.orientation.z,
-        crrent_desired_position_.pose.orientation.w
-    );
-    desired_q.normalize();
+    // tf2::Quaternion desired_q(
+    //     crrent_desired_position_.pose.orientation.x,
+    //     crrent_desired_position_.pose.orientation.y,
+    //     crrent_desired_position_.pose.orientation.z,
+    //     crrent_desired_position_.pose.orientation.w
+    // );
+    // desired_q.normalize();
 
-    tf2::Quaternion delta_q;
-    delta_q.setRPY(
-        current_desired_velocity_.angular.x * dt_,
-        current_desired_velocity_.angular.y * dt_,
-        current_desired_velocity_.angular.z * dt_
-    );
-    desired_q = desired_q * delta_q;
-    desired_q.normalize();
+    // tf2::Quaternion delta_q;
+    // delta_q.setRPY(
+    //     current_desired_velocity_.angular.x * dt_,
+    //     current_desired_velocity_.angular.y * dt_,
+    //     current_desired_velocity_.angular.z * dt_
+    // );
+    // desired_q = desired_q * delta_q;
+    // desired_q.normalize();
 
-    crrent_desired_position_.pose.orientation.x = desired_q.x();
-    crrent_desired_position_.pose.orientation.y = desired_q.y();
-    crrent_desired_position_.pose.orientation.z = desired_q.z();
-    crrent_desired_position_.pose.orientation.w = desired_q.w();
+    // crrent_desired_position_.pose.orientation.x = desired_q.x();
+    // crrent_desired_position_.pose.orientation.y = desired_q.y();
+    // crrent_desired_position_.pose.orientation.z = desired_q.z();
+    // crrent_desired_position_.pose.orientation.w = desired_q.w();
 
-    const double q_norm = std::sqrt(
-        crrent_desired_position_.pose.orientation.x * crrent_desired_position_.pose.orientation.x +
-        crrent_desired_position_.pose.orientation.y * crrent_desired_position_.pose.orientation.y +
-        crrent_desired_position_.pose.orientation.z * crrent_desired_position_.pose.orientation.z +
-        crrent_desired_position_.pose.orientation.w * crrent_desired_position_.pose.orientation.w
-    );
+    // const double q_norm = std::sqrt(
+    //     crrent_desired_position_.pose.orientation.x * crrent_desired_position_.pose.orientation.x +
+    //     crrent_desired_position_.pose.orientation.y * crrent_desired_position_.pose.orientation.y +
+    //     crrent_desired_position_.pose.orientation.z * crrent_desired_position_.pose.orientation.z +
+    //     crrent_desired_position_.pose.orientation.w * crrent_desired_position_.pose.orientation.w
+    // );
 
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(),
-        *node_->get_clock(),
-        1000,
-        "DesiredPose: pos=(%.5f, %.5f, %.5f), quat=(%.5f, %.5f, %.5f, %.5f), |q|=%.6f",
-        crrent_desired_position_.pose.position.x,
-        crrent_desired_position_.pose.position.y,
-        crrent_desired_position_.pose.position.z,
-        crrent_desired_position_.pose.orientation.x,
-        crrent_desired_position_.pose.orientation.y,
-        crrent_desired_position_.pose.orientation.z,
-        crrent_desired_position_.pose.orientation.w,
-        q_norm
-    );
+    // RCLCPP_INFO_THROTTLE(
+    //     node_->get_logger(),
+    //     *node_->get_clock(),
+    //     1000,
+    //     "DesiredPose: pos=(%.5f, %.5f, %.5f), quat=(%.5f, %.5f, %.5f, %.5f), |q|=%.6f",
+    //     crrent_desired_position_.pose.position.x,
+    //     crrent_desired_position_.pose.position.y,
+    //     crrent_desired_position_.pose.position.z,
+    //     crrent_desired_position_.pose.orientation.x,
+    //     crrent_desired_position_.pose.orientation.y,
+    //     crrent_desired_position_.pose.orientation.z,
+    //     crrent_desired_position_.pose.orientation.w,
+    //     q_norm
+    // );
 
 
 
@@ -694,15 +697,15 @@ void VisualServoingArmHandleNode::ComputationalSpeed() {
     initial_trajectory_point_.velocity.linear.x = current_desired_velocity_.linear.x;
     initial_trajectory_point_.velocity.linear.y = current_desired_velocity_.linear.y;
     initial_trajectory_point_.velocity.linear.z = current_desired_velocity_.linear.z;
-    initial_trajectory_point_.velocity.angular.x = current_desired_velocity_.angular.x;
-    initial_trajectory_point_.velocity.angular.y = current_desired_velocity_.angular.y;
-    initial_trajectory_point_.velocity.angular.z = current_desired_velocity_.angular.z;
+    initial_trajectory_point_.velocity.angular.x = 0.0;
+    initial_trajectory_point_.velocity.angular.y = 0.0;
+    initial_trajectory_point_.velocity.angular.z = 0.0;
     initial_trajectory_point_.acceleration.linear.x = current_desired_acceleration.linear.x;
     initial_trajectory_point_.acceleration.linear.y = current_desired_acceleration.linear.y;
     initial_trajectory_point_.acceleration.linear.z = current_desired_acceleration.linear.z;
-    initial_trajectory_point_.acceleration.angular.x = current_desired_acceleration.angular.x;
-    initial_trajectory_point_.acceleration.angular.y = current_desired_acceleration.angular.y;
-    initial_trajectory_point_.acceleration.angular.z = current_desired_acceleration.angular.z;
+    initial_trajectory_point_.acceleration.angular.x = 0.0;
+    initial_trajectory_point_.acceleration.angular.y = 0.0;
+    initial_trajectory_point_.acceleration.angular.z = 0.0;
 
     last_desired_velocity_ = current_desired_velocity_;
     
@@ -756,13 +759,13 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
     );
     double roll, pitch, yaw;
     target_frame.M.GetRPY(roll, pitch, yaw);
-    RCLCPP_INFO_THROTTLE(node_->get_logger(),
-        *node_->get_clock(),
-        1000,
-        "KDL Frame position: x=%.3f, y=%.3f, z=%.3f. KDL Frame orientation (RPY): roll=%.3f, pitch=%.3f, yaw=%.3f, raw|q|=%.6f",
-        target_frame.p.x(), target_frame.p.y(), target_frame.p.z(),
-        roll, pitch, yaw, q_norm
-    );
+    // RCLCPP_INFO_THROTTLE(node_->get_logger(),
+    //     *node_->get_clock(),
+    //     1000,
+    //     "KDL Frame position: x=%.3f, y=%.3f, z=%.3f. KDL Frame orientation (RPY): roll=%.3f, pitch=%.3f, yaw=%.3f, raw|q|=%.6f",
+    //     target_frame.p.x(), target_frame.p.y(), target_frame.p.z(),
+    //     roll, pitch, yaw, q_norm
+    // );
 
     
     // 2. 获取关节初值（优先级: 外部种子 -> joint_states -> 上次成功解）
@@ -927,13 +930,13 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
         if (i != q_result.rows() - 1) ss << ", ";
     }
     ss << "]";
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(),
-        *node_->get_clock(),
-        1000,
-        "%s",
-        ss.str().c_str()
-    );
+    // RCLCPP_INFO_THROTTLE(
+    //     node_->get_logger(),
+    //     *node_->get_clock(),
+    //     1000,
+    //     "%s",
+    //     ss.str().c_str()
+    // );
 
 
 
@@ -1000,12 +1003,12 @@ bool VisualServoingArmHandleNode::PointToTrajectoryPoint() {
         initial_joint_trajectory_.header.stamp.nanosec,
         initial_joint_trajectory_.points.size());
     
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(),
-        *node_->get_clock(),
-        1000,
-        "末端数据转关节轨迹完成"
-    );
+    // RCLCPP_INFO_THROTTLE(
+    //     node_->get_logger(),
+    //     *node_->get_clock(),
+    //     1000,
+    //     "末端数据转关节轨迹完成"
+    // );
     return true;
 }
 

@@ -12,8 +12,10 @@
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/publisher.hpp>
+#include <rclcpp/subscription.hpp>
 #include <rclcpp/time.hpp>
 #include <rclcpp/timer.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <robot_interfaces/msg/detail/moveit__struct.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/buffer.h>
@@ -206,10 +208,8 @@ private:
 
 
     
-
-    geometry_msgs::msg::Pose detected_target_pose_; // 从视觉系统获取的目标位姿
     geometry_msgs::msg::Pose detected_target_pose_on_base_link_; // 转换到base_link坐标系下的目标位姿
-    geometry_msgs::msg::Pose available_target_pose_; // 可用的目标位姿
+
 
 
 
@@ -220,10 +220,12 @@ private:
     double prepare_orientation_max_step_rad_{0.2617993877991494}; // 15 deg
 
     // TODO: 真正的相机返回判断条件
+    void boxPoseCallback(geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
     void visionCallback();
 
     rclcpp::Publisher<robot_interfaces::msg::Moveit>::SharedPtr moveit_pub_;
-    rclcpp::TimerBase::SharedPtr vision_timer_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr box_pose_sub_;
+    // rclcpp::TimerBase::SharedPtr vision_timer_;
 
     // ArmHandleNodeVisualServoing  // 视觉伺服处理对象
     VisualServoingArmHandleNode visual_servoing_handler_;

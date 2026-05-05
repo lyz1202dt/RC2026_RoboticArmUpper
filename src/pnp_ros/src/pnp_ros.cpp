@@ -1,6 +1,9 @@
+#include <geometry_msgs/msg/detail/pose_stamped__struct.hpp>
 #include <geometry_msgs/msg/detail/transform_stamped__struct.hpp>
 #include <rclcpp/logging.hpp>
+#include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/timer.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -15,7 +18,9 @@
 #include <array>
 #include <deque>
 #include <cmath>
+#include <algorithm>
 #include <thread>
+#include <atomic>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
@@ -224,9 +229,9 @@ public:
         // 修复：取消注释以初始化 TF 监听器，否则后续 transform 会崩溃
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("box_pose", 10);
         
         action_client_ = rclcpp_action::create_client<robot_interfaces::action::Catch>(this, "robotic_task");
-        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("robotic_task_", 10);
 
         RCLCPP_INFO(this->get_logger(), "正在打开摄像头...");
         if (!open_camera_with_fallback()) {
@@ -259,6 +264,9 @@ public:
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(33),
                                          std::bind(&BoxPnPNode::process_frame, this));
+        pose_publish_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(50),
+            std::bind(&BoxPnPNode::publish_available_pose, this));
         
         RCLCPP_INFO(this->get_logger(), "节点初始化完成");
     }
@@ -269,6 +277,14 @@ public:
     }
 
 private:
+    void publish_available_pose() {
+        if (!has_valid_pose_) {
+            return;
+        }
+        available_pose_.header.stamp = this->now();
+        pose_publisher_->publish(available_pose_);
+    }
+
     bool is_pose_valid(const geometry_msgs::msg::Pose& pose) const {
         const auto finite = [](double v) { return std::isfinite(v); };
         const bool position_ok = finite(pose.position.x) && finite(pose.position.y) && finite(pose.position.z);
@@ -295,7 +311,7 @@ private:
         if (has_last_goal_send_time_) {
             const auto dt = now - last_goal_send_time_;
             if (dt < rclcpp::Duration::from_seconds(min_goal_send_interval_sec_)) {
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
                                     "跳过发送：节流中");
                 return false;
             }
@@ -314,15 +330,14 @@ private:
                 pose.orientation.w * last_sent_pose_.orientation.w);
             const double clamped_dot = std::clamp(dot, 0.0, 1.0);
             const double angle_delta = 2.0 * std::acos(clamped_dot);
-
-            if (pos_delta < goal_pos_threshold_m_ && angle_delta < goal_angle_threshold_rad_) {
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                    "跳过发送：位姿变化不足");
-                return false;
-            }
         }
 
         return true;
+    }
+
+    bool frame_exists(const std::string& frame_name) const {
+        const auto frames = tf_buffer_->getAllFrameNames();
+        return std::find(frames.begin(), frames.end(), frame_name) != frames.end();
     }
 
     bool open_camera_with_fallback() {
@@ -347,8 +362,8 @@ private:
     }
 
     void configure_camera_properties() {
-        cap_.set(CAP_PROP_FRAME_WIDTH, 640);
-        cap_.set(CAP_PROP_FRAME_HEIGHT, 480);
+        cap_.set(CAP_PROP_FRAME_WIDTH, 1280);
+        cap_.set(CAP_PROP_FRAME_HEIGHT, 720);
         cap_.set(CAP_PROP_FPS, 60);
         cap_.set(CAP_PROP_FOURCC, VideoWriter::fourcc('M', 'J', 'P', 'G'));
         cap_.set(CAP_PROP_BUFFERSIZE, 1);
@@ -491,17 +506,14 @@ private:
                             smoothCorners[3].x, smoothCorners[3].y);
                     putLabel(show, buf, Point(bx, by + dy*4), 0.52, Scalar(180, 180, 180));
 
-                    printf("\rDist=%.1fmm  XYZ=[%.1f, %.1f, %.1f]mm  RPY=[%.1f, %.1f, %.1f]deg   ",
-                           dist, X, Y, Z, eu[0], eu[1], eu[2]);
-                    fflush(stdout);
                 }
 
-                // 构造 camera_link 坐标系下的位姿
+                // 构造 camera_optical_frame 坐标系下的位姿
                 geometry_msgs::msg::PoseStamped pose_camera;
-                pose_camera.header.stamp = this->now();
-                pose_camera.header.frame_id = "camera_link"; // 明确指定为相机坐标系
-                // tvSmooth 来自 solvePnP 的 tvec，代表物体原点在相机坐标系下的位置 (单位：mm)
-                pose_camera.pose.position.x = tvSmooth[0] / 1000.0; // 转换为米
+                // 使用零时间戳请求最新可用 TF，避免仿真时钟和墙钟不一致导致外推失败
+                pose_camera.header.stamp = builtin_interfaces::msg::Time();
+                pose_camera.header.frame_id = "camera_optical_frame"; 
+                pose_camera.pose.position.x = tvSmooth[0] / 1000.0; 
                 pose_camera.pose.position.y = tvSmooth[1] / 1000.0;
                 pose_camera.pose.position.z = tvSmooth[2] / 1000.0;
 
@@ -516,59 +528,72 @@ private:
                 pose_camera.pose.orientation.z = q.z();
                 pose_camera.pose.orientation.w = q.w();
 
-                pos_camera_ = pose_camera; // 保存当前相机坐标系下的位姿
+                RCLCPP_INFO_THROTTLE(
+                    this->get_logger(),
+                    *this->get_clock(),
+                    3000,
+                    "PnP目标位姿(camera_optical_frame): Pos(%.3f, %.3f, %.3f), Rot(%.3f, %.3f, %.3f, %.3f)",
+                    pose_camera.pose.position.x,
+                    pose_camera.pose.position.y,
+                    pose_camera.pose.position.z,
+                    pose_camera.pose.orientation.w,
+                    pose_camera.pose.orientation.x,
+                    pose_camera.pose.orientation.y,
+                    pose_camera.pose.orientation.z
+                );
+
 
                 // 尝试 TF 转换到 base_link
+                if (!frame_exists("base_link") || !frame_exists(pose_camera.header.frame_id)) {
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(),
+                        *this->get_clock(),
+                        5000,
+                        "TF 未就绪：%s -> base_link 还未出现在 TF 树中，请确认 robot_state_publisher 和相机静态 TF 已启动",
+                        pose_camera.header.frame_id.c_str());
+                    return;
+                }
+
+                if (!tf_buffer_->canTransform(
+                        "base_link",
+                        pose_camera.header.frame_id,
+                        tf2::TimePointZero,
+                        tf2::durationFromSec(0.2))) {
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(),
+                        *this->get_clock(),
+                        5000,
+                        "TF 链路未连通：%s -> base_link 暂不可用",
+                        pose_camera.header.frame_id.c_str());
+                    return;
+                }
+
                 try {
-                    // 核心 TF 转换逻辑：
-                    // 1. 查找从 "camera_link" 到 "base_link" 的变换路径
-                    // 2. 将 pose_camera 中的数据转换到 base_link 坐标系下
-                    // 3. 超时时间设为 0.1 秒，若找不到变换则抛出异常
-
-                    geometry_msgs::msg::TransformStamped t;
-                    t.header.stamp = this->now();
-                    t.header.frame_id = "camera_link";
-                    t.child_frame_id = "object_frame";
-                    t.transform.translation.x = pose_camera.pose.position.x;
-                    t.transform.translation.y = pose_camera.pose.position.y;
-                    t.transform.translation.z = pose_camera.pose.position.z;
-                    t.transform.rotation = pose_camera.pose.orientation;
-                    tf_broadcaster_.sendTransform(t);
-
                     geometry_msgs::msg::PoseStamped pose_base = tf_buffer_->transform(
                         pose_camera, "base_link", tf2::durationFromSec(0.1));
-                    pos_base_ = pose_base;
-                    
-                    // 保存为上一次有效位姿
-                    last_valid_pose_ = pose_base;
+                    available_pose_ = pose_base;
+                    available_pose_.header.stamp = this->now();
                     has_valid_pose_ = true;
-                    
-                    // 一直发布位姿
-                    pose_pub_->publish(pose_base);
-                    
-                    // 持续按条件发送抓取任务（节流 + 位姿变化阈值）
+                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                     "pnp 结算出来 base_link 下的位姿:Pos(%lf, %lf, %lf) Rot(%lf, %lf, %lf, %lf)",
+                     pose_base.pose.position.x,
+                     pose_base.pose.position.y,
+                     pose_base.pose.position.z,
+                     pose_base.pose.orientation.w,
+                     pose_base.pose.orientation.x,
+                     pose_base.pose.orientation.y,
+                     pose_base.pose.orientation.z);
+
                     if (should_send_goal(pose_base.pose, this->now())) {
                         send_catch_goal(pose_base.pose);
                     }
-                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "已发布相机坐标系下的位姿");
-                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000, "抓取任务发送逻辑运行中");
-                    
-                } catch (tf2::TransformException &ex) {
+
+                } catch (const tf2::TransformException &ex) {
                     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
                                        "TF 转换失败：%s", ex.what());
                 }
             }
         }
-
-        // 如果当前没检测到，但之前有有效位姿，就发布上一次的
-        if (!anyInited || !detected) {
-            if (has_valid_pose_) {
-                last_valid_pose_.header.stamp = this->now();
-                last_valid_pose_.pose.position.x = 10008342.00;
-                pos_camera_.pose.position.x = 10008342.00; // 同时标记当前位姿无效
-                pose_pub_->publish(last_valid_pose_);
-            }
-        } 
 
         // ---- 显示 mask 在右下角 ----
         {
@@ -587,6 +612,11 @@ private:
 
     bool send_catch_goal(const geometry_msgs::msg::Pose& target_pose) {
         ++goal_send_attempt_count_;
+        if (goal_in_flight_) {
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                 "已有抓取目标在途，等待当前任务完成后再发送");
+            return false;
+        }
         if (!action_server_ready_) {
             if (!action_client_->wait_for_action_server(std::chrono::seconds(2))) {
                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
@@ -613,6 +643,8 @@ private:
         send_goal_options.result_callback = std::bind(&BoxPnPNode::result_cb, this, std::placeholders::_1);
         action_client_->async_send_goal(goal_msg, send_goal_options);
 
+        goal_in_flight_ = true;
+
         last_goal_send_time_ = this->now();
         has_last_goal_send_time_ = true;
         last_sent_pose_ = target_pose;
@@ -624,6 +656,7 @@ private:
         if (!handle) {
             ++goal_reject_count_;
             RCLCPP_WARN(this->get_logger(), "目标被拒绝 reject_count=%d", goal_reject_count_);
+            goal_in_flight_ = false;
             return;
         }
         ++goal_accept_count_;
@@ -634,28 +667,27 @@ private:
         std::shared_ptr<GoalHandleCatch> /*unused*/,
         const std::shared_ptr<const Catch::Feedback> feedback)
     {
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                             "收到反馈: state=%d 描述=%s",
-                             feedback->current_state,
-                             feedback->state_describe.c_str());
+        // RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+        //                      "收到反馈: state=%d 描述=%s",
+        //                      feedback->current_state,
+        //                      feedback->state_describe.c_str());
     }
 
     void result_cb(const GoalHandleCatch::WrappedResult &result) {
-        RCLCPP_INFO(this->get_logger(), "抓取任务完成: %s", result.result->reason.c_str());
+        // RCLCPP_INFO(this->get_logger(), "抓取任务完成: %s", result.result->reason.c_str());
+        goal_in_flight_ = false;
     }
 
     VideoCapture cap_;
     Mat newK_, mapX_, mapY_;
     array<CornerKF, 4> kfs_;
     PoseSmootherVec3 tvecSmoother_{SMOOTH_N};
-    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
     rclcpp_action::Client<Catch>::SharedPtr action_client_;
     rclcpp::TimerBase::SharedPtr timer_;
 
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-    geometry_msgs::msg::TransformStamped transformStamped_;
     tf2_ros::TransformBroadcaster tf_broadcaster_{this};
 
     bool has_valid_pose_ = false;
@@ -675,9 +707,24 @@ private:
     bool has_last_sent_pose_ = false;
     geometry_msgs::msg::Pose last_sent_pose_;
 
-    geometry_msgs::msg::PoseStamped last_valid_pose_; // 上一次有效位姿
-    geometry_msgs::msg::PoseStamped pos_camera_; // 当前相机坐标系下的位姿（无论是否有效）
-    geometry_msgs::msg::PoseStamped pos_base_; // 当前 base_link 坐标系下的位姿（无论是否有效）
+    std::atomic_bool goal_in_flight_{false};
+
+
+
+
+
+
+    geometry_msgs::msg::PoseStamped available_pose_;
+    rclcpp::TimerBase::SharedPtr pose_publish_timer_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
+
+
+
+
+
+
+
+
     int empty_frame_count_ = 0;
 };
 
@@ -687,3 +734,4 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
+

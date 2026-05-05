@@ -23,7 +23,7 @@ public:
 
         client_ = rclcpp_action::create_client<Catch>(this, "robotic_task");
 
-        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("robotic_task_", 10);
+        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("box_pose", 10);
 
         tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);

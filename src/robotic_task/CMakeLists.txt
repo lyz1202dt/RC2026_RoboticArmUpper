@@ -23,6 +23,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(robot_interfaces REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -55,6 +56,7 @@ target_include_directories(robotic_task
 )
 
 ament_target_dependencies(robotic_task
+  ament_index_cpp
   rclcpp
   rclcpp_action
   std_msgs
